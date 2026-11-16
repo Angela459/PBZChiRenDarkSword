@@ -8,17 +8,23 @@ local output=io.open(root.."Runtime/run-"..session..".log","a")
 local enabled,waiting,ability,lastActive=false,false,nil,false
 local desired,ticks,faulted=true,0,false
 local settingsPath=root.."../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt"
-local patched,held,hooks,history={},{},{},{}
+local patched,held,history={},{},{}
+local timelineRegistered=false
 local sequence,nextDiscover,nextHeartbeat,startedAt=0,0,0,0
 local lastHostBeat,hostReadMiss=nil,false
 local groundActions,bulletData,ipcFailures={},{},{}
-local releaseAt,releaseBranch,groundBaseline,groundDone=nil,nil,0,false
+local releaseBranch,groundBaseline=nil,0
 local hitPlayed,dirtyCommands=false,false
-local groundSeen,releaseClosed,hitSeen,hitDiagnostics=false,false,{},{}
-local targetFunctions,targetClasses={},{}
+local groundSeen,releaseClosed,hitSeen=false,false,{}
+-- DEV-BEGIN
+local hitDiagnostics={}
+-- DEV-END
+local targetRegistered=false
 local targetWaitLogged=false
 local releaseCharge=0
-local hitCounts={marker=0,target=0,matched=0}
+-- DEV-BEGIN
+local hitCounts={marker=0,matched=0}
+-- DEV-END
 local previousCount,highestStage,released,releasePending=nil,0,false,false
 local castStarted,chargeResetSeen,castSerial=false,false,0
 local TARGETS={SFX_Combat_Hun_ChiRen_Fire_Charge=true,SFX_Combat_Hun_ChiRen_C_Full=true,
@@ -64,11 +70,13 @@ local function readKnown(object,name)
     local prop=fields(object)[name]
     if prop=="ObjectProperty" or prop=="ObjectPtrProperty" or prop=="InterfaceProperty" then return unwrap(object[name]) end
 end
+-- DEV-BEGIN
 local function diagnoseHit(reason,message)
     local count=hitDiagnostics[reason] or 0
     if count<4 then log("HIT_FILTER "..reason.." "..(message or "")) end
     hitDiagnostics[reason]=count+1
 end
+-- DEV-END
 local function isCharacter(object)
     if not valid(object) then return false end
     local cls=object:GetClass()
@@ -87,11 +95,16 @@ end
 local function startCast(reason,count)
     castSerial=castSerial+1;castStarted=true;chargeResetSeen=false
     highestStage,released,releasePending=0,false,false
-    releaseAt,releaseBranch,releaseCharge=nil,nil,0
-    groundDone,groundSeen,releaseClosed,hitPlayed=false,false,false,false
-    hitSeen,hitDiagnostics={},{}
-    hitCounts={marker=0,target=0,matched=0}
+    releaseBranch,releaseCharge=nil,0
+    groundSeen,releaseClosed,hitPlayed=false,false,false
+    hitSeen={}
+-- DEV-BEGIN
+    hitDiagnostics={}
+
+    hitCounts={marker=0,matched=0}
+
     log("ULTIMATE_START ChargeCount="..tostring(count).." reason="..reason.." cast="..castSerial)
+-- DEV-END
 end
 -- A release action spawns an emitter, whose event graph spawns damage bullets.
 -- Follow only reflected bullet/event fields, with verified struct schema and budgets.
@@ -128,7 +141,9 @@ local function collectBulletData(rootData,branch)
         -- stripped class schema; child assets must inherit BulletDataBase.
         if id==full(rootData) or isData then
             bulletData[id]=bulletData[id] or {};bulletData[id][branch]=true
+-- DEV-BEGIN
             log("ULTIMATE_BULLET_DATA "..branch.." depth="..depth.." "..id)
+-- DEV-END
         end
         for _,name in ipairs({"BulletData","BulletEventLibrary"}) do
             if props[name]=="ObjectProperty" then visit(object[name],depth+1) end
@@ -201,10 +216,14 @@ local function queueHit(enemy,via)
     local now=os.clock()
     if hitSeen[key] and now-hitSeen[key]<0.05 then return end
     hitSeen[key]=now
+-- DEV-BEGIN
     hitCounts.matched=hitCounts.matched+1
+-- DEV-END
     hitPlayed=true -- suppress this cast's ground audio even before the timer runs
     command("hit:"..castSerial)
+-- DEV-BEGIN
     log("PLAY sequence=12,11 stop_same_cast_01=true cast="..castSerial.." dispatch=callback reason=full-charge enemy contact "..key.." via="..via)
+-- DEV-END
 end
 local function hostReady()
     -- Atomic replacement can briefly deny a Windows reader access. A failed read
@@ -244,7 +263,7 @@ local function disable(reason)
     enabled,waiting,ability,lastActive=false,false,nil,false
     previousCount,highestStage,released,releasePending=nil,0,false,false
     castStarted,chargeResetSeen=false,false
-    releaseAt,releaseBranch,groundDone=nil,nil,false
+    releaseBranch=nil
     groundSeen,releaseClosed,hitSeen=false,true,{}
     groundActions,bulletData={},{}
     restore();pcall(command,"quit");log("ORIGINAL "..reason.."; all edited references restored")
@@ -254,7 +273,7 @@ local function owned(v)
     local owner=v:GetOuter();return valid(owner) and full(owner):find("BP_Renewal_Hun",1,true)~=nil
 end
 local function registerTimelineHooks()
-    if #hooks>0 then return true end
+    if timelineRegistered then return true end
     if type(RegisterHook)~="function" then return false end
     for _,spec in ipairs({
         {path="/Script/LegoAbility.LegoAbility:PlayTimeline",field="Timeline",kind="ObjectProperty"},
@@ -297,10 +316,11 @@ local function registerTimelineHooks()
                         if released and chargeResetSeen then startCast("release after charge reset",ability.ChargeCount) end
                         if released then return end
                         releasePending=name -- only a marker; audio IPC happens on the game-thread timer
-                        releaseAt=releaseAt or os.clock()
                         releaseBranch=name
                         releaseCharge=math.max(highestStage,ability.ChargeCount)
-                        hitCounts={marker=0,target=0,matched=0}
+-- DEV-BEGIN
+                        hitCounts={marker=0,matched=0}
+-- DEV-END
                         groundSeen,releaseClosed,hitSeen,hitPlayed=false,false,{},false
                         local action=groundActions[name]
                         groundBaseline=valid(action) and action.PlayingID or 0
@@ -312,16 +332,17 @@ local function registerTimelineHooks()
             held[#held+1]=callback
             local registered,pre,post=pcall(RegisterHook,path,callback,function() end)
             if registered and type(pre)=="number" and type(post)=="number" then
-                hooks[#hooks+1]={path=path,pre=pre,post=post}
+                timelineRegistered=true
                 log("HOOK release timeline "..path.." params="..table.concat(names,","))
             else log("HOOK_UNAVAILABLE "..path.." "..tostring(pre)) end
         else log("HOOK_UNAVAILABLE "..spec.path.." signature="..table.concat(names,",")) end
     end
-    return #hooks>0
+    return timelineRegistered
 end
 -- Hook the game's hit-target Blueprint event, rather than a native damage method.
 -- Enumerate only loaded classes: no asset loading and no guessed function names.
 local function registerTargetHooks()
+    if targetRegistered then return end
     local schema=StaticFindObject("/Script/SGameCombatSystem.BulletEventData")
     local actorVerified,bodyVerified,componentVerified,ownerVerified=false,false,false,false
     if schema then pcall(function() schema:ForEachProperty(function(p)
@@ -343,7 +364,9 @@ local function registerTargetHooks()
     local function eventTarget(data)
         local actor=unwrap(data.EventActor)
         if isCharacter(actor) then
+-- DEV-BEGIN
             diagnoseHit("target fields","EventActor="..full(actor).." resolved=EventActor")
+-- DEV-END
             return actor,"EventActor"
         end
         local component,owner
@@ -361,11 +384,16 @@ local function registerTargetHooks()
                 end
             end
         end
+-- DEV-BEGIN
         diagnoseHit("target fields","EventActor="..full(actor).." actor_kind="..kind(actor).." EventBody.Component="..full(component).." component_owner="..full(owner))
+-- DEV-END
         return owner,"EventBody.Component.GetOwner"
     end
     local function belongsToUltimate(bullet)
-        local seen,player,last={},ability:GetOuter(),"initial_kind="..kind(bullet)
+        local seen,player={},ability:GetOuter()
+-- DEV-BEGIN
+        local last="initial_kind="..kind(bullet)
+-- DEV-END
         for _=1,8 do
             if not valid(bullet) or seen[full(bullet)] then break end
             seen[full(bullet)]=true
@@ -374,28 +402,35 @@ local function registerTargetHooks()
             local data=readKnown(bullet,"BulletData")
             if not valid(data) then data=readKnown(bullet,"MyData") end
             local branch=bulletData[full(data)]
+-- DEV-BEGIN
             last="bullet="..full(bullet).." owner="..full(owner).." ability="..full(source).." data="..full(data)
+-- DEV-END
             if valid(source) and full(source)~=full(ability) then
-                diagnoseHit("target different ability",full(source));return false
+-- DEV-BEGIN
+                diagnoseHit("target different ability",full(source))
+-- DEV-END
+                return false
             end
             if full(owner)==full(player) and (full(source)==full(ability) or (branch and branch.Release_03)) then return true end
             bullet=readKnown(bullet,"ParentBullet")
         end
+-- DEV-BEGIN
         diagnoseHit("target source",last)
+-- DEV-END
         return false
     end
-    local function inspect(cls,marker)
+    local function inspect(cls)
         if not valid(cls) then return end
         local className=full(cls)
-        if targetClasses[className] then return end
-        local count,registered=0,0
+        local count=0
+-- DEV-BEGIN
+        local registered=0
+-- DEV-END
         local ok,err=pcall(function() cls:ForEachFunction(function(fn)
             count=count+1;if count>96 then return true end
             if not valid(fn) then return end
             local path=full(fn):match("^Function (/.+)$")
-            if not path or targetFunctions[path] then return end
-            local method=path:match(":([^:]+)$") or ""
-            if method:find("ExecuteUbergraph_",1,true) or method:find("__DelegateSignature",1,true) then return end
+            if not path or path:match(":([^:]+)$")~="Trigger" then return end
             local flags=fn:GetFunctionFlags()
             if type(flags)~="number" or (flags & 0x00110000)~=0 then return end
             local names,kinds={},{}
@@ -403,75 +438,81 @@ local function registerTargetHooks()
                 local name=p:GetFName():ToString()
                 if name~="ReturnValue" then names[#names+1]=name;kinds[#kinds+1]=p:GetClass():GetFName():ToString() end
             end)
+-- DEV-BEGIN
             log("HIT_API function="..path.." flags="..flags.." params="..table.concat(names,",").." types="..table.concat(kinds,","))
+-- DEV-END
             -- A Blueprint override exists under /Asset/...; /Script methods may
             -- run directly in C++ and did not fire in the previous game logs.
             if path:sub(1,8)=="/Script/" then return end
-            local bulletIndex,eventIndex,targetIndex
+            local bulletIndex,eventIndex
             for i,name in ipairs(names) do
-                local lower=name:lower():gsub("[^a-z]","")
-                if (lower=="bullet" or lower=="inbullet" or lower=="sourcebullet") and (kinds[i]=="InterfaceProperty" or kinds[i]=="ObjectProperty") then bulletIndex=i end
-                if (lower=="eventdata" or lower=="ineventdata" or lower=="bulleteventdata") and kinds[i]=="StructProperty" and actorVerified then eventIndex=i end
-                if (lower=="targetavatar" or lower=="targetactor" or lower=="hitactor" or lower=="eventactor" or lower=="target") and kinds[i]=="ObjectProperty" then targetIndex=i end
+                if name=="SourceBullet" and kinds[i]=="InterfaceProperty" then bulletIndex=i end
+                if name=="EventData" and kinds[i]=="StructProperty" and actorVerified then eventIndex=i end
             end
-            local hitMethod=method:lower():gsub("[^a-z]","")
-            local isTargetHandler=hitMethod:find("hittarget",1,true) or hitMethod:find("targethit",1,true) or hitMethod:find("attackhit",1,true)
-            if not marker and not isTargetHandler then return end
-            if not (eventIndex or targetIndex) or (marker and not bulletIndex) then
+            if not eventIndex or not bulletIndex then
                 log("HIT_API_SKIP unverified hit parameter layout "..path);return
             end
+-- DEV-BEGIN
             local calls=0
+-- DEV-END
             local callback=function(context,...)
+-- DEV-BEGIN
                 calls=calls+1
+
                 if calls<=3 then log("TARGET_CALLBACK raw="..calls.." path="..path.." full_charge="..tostring(fullChargeWindow())) end
+-- DEV-END
                 if not fullChargeWindow() then return end
-                local via=marker and "marker" or "target"
-                hitCounts[via]=hitCounts[via]+1
+-- DEV-BEGIN
+                hitCounts.marker=hitCounts.marker+1
+-- DEV-END
                 local args={...}
                 local checked,why=pcall(function()
-                    local bullet=bulletIndex and unwrap(args[bulletIndex]) or unwrap(context)
-                    local enemy,resolvedBy
-                    if targetIndex then enemy=unwrap(args[targetIndex])
-                    else
-                        local data=unwrap(args[eventIndex])
-                        if kind(data)~="UScriptStruct" and type(data)~="table" then diagnoseHit("target event type",kind(data));return end
-                        enemy,resolvedBy=eventTarget(data)
+                    local bullet=unwrap(args[bulletIndex])
+                    local data=unwrap(args[eventIndex])
+                    if kind(data)~="UScriptStruct" and type(data)~="table" then
+-- DEV-BEGIN
+                        diagnoseHit("target event type",kind(data))
+-- DEV-END
+                        return
                     end
+                    local enemy,resolvedBy=eventTarget(data)
                     if not isCharacter(enemy) or full(enemy)==full(ability:GetOuter()) then
-                        diagnoseHit("target actor",full(enemy));return
+-- DEV-BEGIN
+                        diagnoseHit("target actor",full(enemy))
+-- DEV-END
+                        return
                     end
                     if not belongsToUltimate(bullet) then return end
-                    queueHit(enemy,via.." "..path.." target="..(resolvedBy or "target parameter"))
+                    queueHit(enemy,"marker "..path.." target="..resolvedBy)
+-- DEV-BEGIN
                     diagnoseHit("target callback","bullet_kind="..kind(bullet).." bullet="..full(bullet).." actor="..full(enemy))
+
                     diagnoseHit("target bullet","owner="..full(readKnown(bullet,"BulletOwnerAvatar")).." source="..full(readKnown(bullet,"BulletSourceAbility")).." data="..full(readKnown(bullet,"BulletData")))
+-- DEV-END
                 end)
-                if not checked then diagnoseHit("target callback error",tostring(why)) end
+                if not checked then log("ERROR hit callback "..tostring(why)) end
             end
             held[#held+1]=callback
             -- UE4SS's Blueprint hook uses its single script callback slot.
             local hooked,pre,post=pcall(RegisterHook,path,callback)
             if hooked and type(pre)=="number" and type(post)=="number" then
-                targetFunctions[path]=true;hooks[#hooks+1]={path=path,pre=pre,post=post};registered=registered+1
+                targetRegistered=true
+-- DEV-BEGIN
+                registered=registered+1
+-- DEV-END
                 log("HOOK hit target "..path.." mode=script params="..table.concat(names,","))
             else log("TARGET_HOOK_UNAVAILABLE "..path.." "..tostring(pre)) end
         end) end)
-        if ok then targetClasses[className]=true else log("TARGET_DISCOVERY_PARTIAL "..className.." "..tostring(err)) end
+        if not ok then log("TARGET_DISCOVERY_PARTIAL "..className.." "..tostring(err)) end
+-- DEV-BEGIN
         log("HIT_API_CLASS "..className.." functions="..count.." registered="..registered.." body_schema="..tostring(bodyVerified and componentVerified).." owner_getter="..tostring(ownerVerified))
+-- DEV-END
     end
     local marker=StaticFindObject("/PBZCombatAsset/Prototypes/Bullet/Events/PBZ_BulletEvent_MarkBulletHitTarget.PBZ_BulletEvent_MarkBulletHitTarget_C")
     if not valid(marker) and not targetWaitLogged then
         targetWaitLogged=true;log("TARGET_WAIT hit-marker Blueprint class not loaded; retrying without asset loads")
     end
-    inspect(marker,true)
-    -- Concrete Blueprint handlers are discovered from the emitter/projectile
-    -- classes actually referenced by the loaded player ability's bullet data.
-    for _,clsName in ipairs({"BP_PBZ_ProjectileEmitter_C","BP_PBZ_ProjectileBullet_C"}) do
-        local found,objects=pcall(FindAllOf,clsName)
-        if found then for i,object in ipairs(objects or {}) do
-            if i>4 then break end
-            if valid(object) then inspect(object:GetClass(),false) end
-        end end
-    end
+    inspect(marker)
 end
 local function enable()
     if enabled or waiting then return end
@@ -511,7 +552,9 @@ local function discover()
                     if branch and eventName:match("%.SFX_Combat_Special_LionDancer_HitGround_Stone_Light$")
                         and fields(action).PlayingID=="IntProperty" then
                         groundActions[branch]=action
+-- DEV-BEGIN
                         log("GROUND_NODE "..branch.." "..actionName.." observe=PlayingID")
+-- DEV-END
                     end
                     local short=eventName:match("%.(SFX_Combat_Hun_ChiRen_[%w_]+)$")
                     if short and TARGETS[short] and eventName:find("/Game/Wwise/Events/SFX/Combat/",1,true) then
@@ -540,15 +583,22 @@ local function discover()
     for _,item in ipairs(patched) do
         item.action.AkEvent=nil
         if valid(item.action.AkEvent) then error("mute assignment failed") end
+-- DEV-BEGIN
         log("MUTED "..full(item.action))
+-- DEV-END
     end
     ability,lastActive=selected,selected.bIsActive==true
     previousCount=selected.ChargeCount
     highestStage=lastActive and previousCount or 0
     released=false;releasePending=false
     castStarted,chargeResetSeen=lastActive,false
-    if lastActive then castSerial=castSerial+1;log("CAST_RESUME cast="..castSerial.." ChargeCount="..previousCount) end
-    releaseAt,releaseBranch,groundDone,hitPlayed=nil,nil,false,false
+    if lastActive then
+        castSerial=castSerial+1
+-- DEV-BEGIN
+        log("CAST_RESUME cast="..castSerial.." ChargeCount="..previousCount)
+-- DEV-END
+    end
+    releaseBranch,hitPlayed=nil,false
     groundSeen,releaseClosed,hitSeen=false,false,{}
     log("ARMED stage-driven; muted="..#matches.." initial_count="..tostring(previousCount))
 end
@@ -558,43 +608,60 @@ local function sample()
     if type(count)~="number" or count<0 or count>3 then error("ChargeCount outside verified 0..3: "..tostring(count)) end
     if current and released and count==0 and (previousCount or 0)>0 then
         chargeResetSeen=true
+-- DEV-BEGIN
         log("CHARGE_RESET while active after release; awaiting new charge or Main timeline")
+-- DEV-END
     end
     if current and released and chargeResetSeen and count>0 then
         startCast("charge resumed without inactive frame",count)
     elseif current and not lastActive and not releasePending and not castStarted then
         startCast("active transition",count)
     end
+-- DEV-BEGIN
     if count~=previousCount then log("CHARGE_COUNT "..tostring(previousCount).." -> "..count.." active="..tostring(current)) end
+-- DEV-END
     if current and not released and count>highestStage then
         -- No made-up intermediate timing if a native update jumps multiple levels.
+-- DEV-BEGIN
         if count>highestStage+1 then log("STAGES_SKIPPED "..highestStage.." -> "..count) end
+-- DEV-END
         highestStage=count
-        command("play"..count);log("PLAY clip="..count.." reason=ChargeCount "..count)
+        command("play"..count)
+-- DEV-BEGIN
+        log("PLAY clip="..count.." reason=ChargeCount "..count)
+-- DEV-END
     end
     if releasePending and not released then
         released=true
+-- DEV-BEGIN
         log("RELEASE "..releasePending.." charge="..releaseCharge.." cast="..castSerial.." ground=01 unless hit; full-charge target replaces 01 with 12,11")
+-- DEV-END
         releasePending=false
     end
-    if releaseAt and not groundSeen and not releaseClosed then
+    if releaseBranch and not groundSeen and not releaseClosed then
         local action=groundActions[releaseBranch]
         local playing=valid(action) and action.PlayingID or 0
         if type(playing)=="number" and playing~=0 and playing~=groundBaseline then
             groundSeen=true
+-- DEV-BEGIN
             log("GROUND_SOUND PlayingID="..tostring(playing).." branch="..releaseBranch)
+-- DEV-END
+            if not hitPlayed then
+                command("play4:"..castSerial)
+-- DEV-BEGIN
+                log("PLAY clip=4 reason=ground sound branch="..releaseBranch.." cast="..castSerial)
+-- DEV-END
+            end
         end
     end
-    if groundSeen and not groundDone then
-        groundDone=true
-        if not hitPlayed then
-            command("play4:"..castSerial);log("PLAY clip=4 reason=ground sound branch="..releaseBranch.." cast="..castSerial)
-        else log("SUPPRESS clip=4 reason=full-charge hit cast="..castSerial) end
-    end
     if not current and lastActive then
+-- DEV-BEGIN
         log("ULTIMATE_END released="..tostring(released))
+-- DEV-END
         if not released then command("stop") end -- cancellation is not a release
-        log("HIT_COUNTS marker="..hitCounts.marker.." target="..hitCounts.target.." matched="..hitCounts.matched)
+-- DEV-BEGIN
+        log("HIT_COUNTS marker="..hitCounts.marker.." matched="..hitCounts.matched)
+-- DEV-END
         releaseClosed=true
         castStarted,chargeResetSeen=false,false
         highestStage=0
@@ -629,7 +696,7 @@ local function tick()
     if ability and not owned(ability) then
         restore();ability=nil;lastActive=false;releasePending=false
         castStarted,chargeResetSeen=false,false
-        releaseAt,releaseBranch=nil,nil
+        releaseBranch=nil
         groundSeen,releaseClosed,hitSeen=false,true,{}
         groundActions,bulletData={},{};command("stop");log("WORLD_CHANGE")
     end
@@ -645,5 +712,5 @@ end
 held[#held+1]=run
 if type(LoopInGameThreadWithDelay)=="function" then
     LoopInGameThreadWithDelay(50,run)
-    log("LOADED v0.12 verified hit dispatched directly from callback; prewarmed hit voices; same-cast 01 cancellation")
+    log("LOADED v1.0 verified hit dispatched directly from callback; prewarmed hit voices; same-cast 01 cancellation")
 else log("ERROR no game-thread timer; originals intact") end

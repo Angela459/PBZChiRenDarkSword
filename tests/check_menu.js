@@ -1,6 +1,7 @@
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
-const source = fs.readFileSync(path.join(__dirname, "../Menu/main.js"), "utf8");
+const release = Boolean(process.env.PBZ_TEST_ROOT);
+const source = fs.readFileSync(path.join(process.env.PBZ_TEST_ROOT || path.join(__dirname, ".."), "Menu/main.js"), "utf8");
 function load(registry) {
     const writes = [];
     const context = {
@@ -34,11 +35,17 @@ assert.equal(descriptor.settings[0].type, "toggle");
 assert.equal(descriptor.settings[0].default, true);
 assert.equal(descriptor.settings[0].key, "Enabled");
 assert.equal(descriptor.settings[0].label["zh-Hans"], "启用");
-descriptor.onChange("Enabled", "Off");
-assert(pending.writes.at(-1).text.includes("Enabled=Off"));
+assert.equal(descriptor.version, "1.0");
+if (!release) {
+    descriptor.onChange("Enabled", "Off");
+    assert(pending.writes.at(-1).text.includes("Enabled=Off"));
+} else {
+    assert.equal(descriptor.onChange, undefined);
+    assert.equal(pending.writes.length, 0);
+}
 pending.context.exports.stop();
 const count = pending.writes.length;
-descriptor.onChange("Enabled", "On");
+if (!release) descriptor.onChange("Enabled", "On");
 assert.equal(pending.writes.length, count);
 assert.equal(pending.context.__PBZLoaderEntries.PBZChiRenAudioReplace, undefined);
 console.log("PASS ExampleMod-style registration before menu startup; one persisted toggle, stop cleans up callbacks");

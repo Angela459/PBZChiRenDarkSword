@@ -1,6 +1,4 @@
 Runtime/
-work/
-Audio/charge-sequence.wav
 __pycache__/
 *.py[cod]
 .venv/

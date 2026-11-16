@@ -1,4 +1,5 @@
 """Offline native-API mocks and silent host IPC checks; no audio is played."""
+import os
 import subprocess
 import tempfile
 import time
@@ -6,10 +7,12 @@ import shutil
 import wave
 from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]
+TESTS=Path(__file__).resolve().parent
+ROOT=Path(os.environ.get('PBZ_TEST_ROOT',TESTS.parent))
+RELEASE=bool(os.environ.get('PBZ_TEST_ROOT'))
 from lupa.lua54 import LuaRuntime
 
-MOCK=(ROOT/'tests/mock_unreal.lua').read_text(encoding='utf-8')
+MOCK=(TESTS/'mock_unreal.lua').read_text(encoding='utf-8')
 EXTRA=r'''
 local function object(id,props,values,isRoot)
     local methods={type=function() return values.Kind or 'UObject' end,
@@ -75,9 +78,7 @@ childData=object('PBZ_BulletData /Game/Bullets/ChiRenChild.ChiRenChild',{}, {})
 bulletValues={BulletSourceAbility=ability,BulletOwnerAvatar=ability:GetOuter(),BulletData=childData}
 liveBullet=object('PBZ_SweepTraceBullet Mock.Bullet',
     {BulletSourceAbility='ObjectProperty',BulletOwnerAvatar='ObjectProperty',BulletData='ObjectProperty'},bulletValues)
-moduleValues={BulletData=childData,LastOwnerAvatar=ability:GetOuter(),Outer=liveBullet}
-attackModule=object('BulletAttackModule Mock.Bullet.Attack',
-    {BulletData='ObjectProperty',LastOwnerAvatar='ObjectProperty'},moduleValues)
+
 enemy={type=function() return 'AActor' end,IsValid=function() return true end,
     GetFullName=function() return 'BP_Monster_C Mock.Enemy' end,
     GetClass=function() return {type=function() return 'UClass' end,IsValid=function() return true end,
@@ -87,7 +88,6 @@ FindAllOf=function(cls)
     calls=calls+1
     if cls=='GA_Hun_ChiRen_C_C' then return {ability} end
     if cls=='GAA_BulletBurstWithDeflect_C' then return {bulletAction} end
-    if cls=='BP_PBZ_ProjectileEmitter_C' or cls=='BP_PBZ_ProjectileBullet_C' then return {} end
     assert(cls=='GAA_PlaySound_Opt_C')
     if missingOne then local a={};for i=1,8 do a[i]=actions[i] end;return a end
     return actions
@@ -134,16 +134,7 @@ StaticFindObject=function(path)
     if path=='/Script/SGameUtils.ComponentSocket' then return makeSchema({Component='ObjectProperty',SocketName='NameProperty'}) end
     if path=='/Script/Engine.ActorComponent:GetOwner' then return nativeFunction({{'ReturnValue','ObjectProperty'}},path,1024) end
     if path==markerClassPath then return markerClass end
-    if path:find('DealDamageToAvatar',1,true) then
-        return {type=function() return 'UFunction' end,IsValid=function() return true end,
-            ForEachProperty=function(_,fn)
-                for _,n in ipairs({'TargetAvatar','HitLocation','HitBody','AttackDirection','SweepDirection'}) do
-                    local name=n
-                    fn({GetFName=function() return {ToString=function() return name end} end,
-                        GetClass=function() return {GetFName=function() return {ToString=function() return name=='TargetAvatar' and 'ObjectProperty' or 'StructProperty' end} end} end})
-                end
-            end}
-    end
+    assert(path=='/Script/LegoAbility.LegoAbility:PlayTimeline' or path=='/Script/LegoAbility.LegoAbility:PlayTimelineByName','unverified API lookup '..path)
     local byName=path:find('ByName',1,true)~=nil
     return {type=function() return 'UFunction' end,IsValid=function() return true end,
         ForEachProperty=function(_,fn)
@@ -195,7 +186,8 @@ def runtime(initial=None,setup=None):
 lua=runtime()
 lua.execute('step(1);assert(hostSession~=nil);step(7);assert(calls>0);for i=1,9 do assert(actions[i].AkEvent==nil) end;assert(actions[10].AkEvent==otherEvent)')
 assert 'ARMED stage-driven' in lua.eval('allLogs()')
-assert 'PlayTimeline params=Timeline' in lua.eval('allLogs()')
+if not RELEASE:
+    assert 'PlayTimeline params=Timeline' in lua.eval('allLogs()')
 print('PASS immediate default-on, both actual timeline signatures verified; nine target refs muted')
 lua.execute('rootValues.bIsActive=true;step(1);assert(not command():find("play",1,true))')
 for stage in [1,2,3]:
@@ -207,7 +199,8 @@ lua.execute('release(3);step(1);assert(occurrences(command(),"play4")==0);releas
 assert lua.eval('occurrences(command(),"play4")')==1
 lua.execute('rootValues.bIsActive=false;rootValues.ChargeCount=0;step(1)')
 assert lua.eval('occurrences(command(),"play4")')==1
-assert 'GROUND_SOUND PlayingID=42' in lua.eval('allLogs()')
+if not RELEASE:
+    assert 'GROUND_SOUND PlayingID=42' in lua.eval('allLogs()')
 assert 'reason=full-charge miss confirmed at ability end' not in lua.eval('allLogs()')
 print('PASS charge clips once each; full-charge ground plays 01 immediately with no extra sound at ability end')
 
@@ -251,13 +244,15 @@ bulletValues.BulletOwnerAvatar=makeTestObject(ability:GetOuter():GetFullName(),{
 ''')
 actor_lua.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount=3;step(1);release(3);hit();step(1)')
 assert actor_lua.eval('occurrences(command(),"|hit")')==1
-assert 'actor=BP_Monster_C Mock.Enemy' in actor_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'actor=BP_Monster_C Mock.Enemy' in actor_lua.eval('allLogs()')
 print('PASS actual AActor enemy and player-owner wrappers are valid; source ability still must match')
 
 immediate_lua=runtime()
 immediate_lua.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount=3;step(1);release(3);hit()')
 assert '|hit:1' in immediate_lua.eval('command()')
-assert 'dispatch=callback' in immediate_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'dispatch=callback' in immediate_lua.eval('allLogs()')
 immediate_lua.execute('step(1);assert(occurrences(command(),"|hit")==1)')
 immediate_lua.execute('step(2);writeFailures["../Runtime/command.txt"]=true;hit();assert(occurrences(command(),"|hit")==1);writeFailures["../Runtime/command.txt"]=nil;step(1);assert(occurrences(command(),"|hit")==2)')
 print('PASS verified hit is published before the next timer tick, never repeated by timer; transient write failure retains immediate command')
@@ -277,14 +272,16 @@ for stage in [1,2,3]:
 rapid_lua.execute('release(3);step(1);groundValues.PlayingID=2;step(1);hit();step(1)')
 assert all(rapid_lua.eval(f'occurrences(command(),"play{i}")')==2 for i in [1,2,3,4])
 assert rapid_lua.eval('occurrences(command(),"|hit")')==3
-assert 'reason=charge resumed without inactive frame' in rapid_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'reason=charge resumed without inactive frame' in rapid_lua.eval('allLogs()')
 print('PASS back-to-back casts with no inactive sample replay charge/ground/hit; count reset alone does not close prior hit window')
 
 # A verified Main timeline can rearm even if polling skipped the zero counter.
 rapid_lua.execute('rootValues.ChargeCount=0;mainTimeline();rootValues.ChargeCount=1;step(1);rootValues.ChargeCount=2;step(1);rootValues.ChargeCount=3;step(1);release(3);step(1);groundValues.PlayingID=3;step(1);hit();step(1)')
 assert all(rapid_lua.eval(f'occurrences(command(),"play{i}")')==3 for i in [1,2,3,4])
 assert rapid_lua.eval('occurrences(command(),"|hit")')==4
-assert 'reason=Main timeline' in rapid_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'reason=Main timeline' in rapid_lua.eval('allLogs()')
 rapid_lua.execute('mainTimeline();step(1);mainTimeline();step(1)')
 assert rapid_lua.eval('occurrences(command(),"play3")')==4 # observed count once, never a duplicate from the second Main call
 print('PASS Main timeline rearms repeated casts even when zero was not sampled; duplicate Main does not replay charge')
@@ -298,7 +295,7 @@ before=lua.eval('occurrences(command(),"play4")')
 lua.execute('rootValues.bIsActive=true;rootValues.ChargeCount=3;step(1);hit();step(1);assert(occurrences(command(),"|hit")==0);release(3);step(1)')
 lua.execute('hit(terrain);step(1);assert(occurrences(command(),"|hit")==0)')
 lua.execute('bulletValues.BulletSourceAbility=otherEvent;hit();step(1);assert(occurrences(command(),"|hit")==0);bulletValues.BulletSourceAbility=ability')
-lua.execute('moduleValues.LastOwnerAvatar=enemy;bulletValues.BulletOwnerAvatar=enemy;hit();step(1);assert(occurrences(command(),"|hit")==0);moduleValues.LastOwnerAvatar=ability:GetOuter();bulletValues.BulletOwnerAvatar=ability:GetOuter()')
+lua.execute('bulletValues.BulletOwnerAvatar=enemy;hit();step(1);assert(occurrences(command(),"|hit")==0);bulletValues.BulletOwnerAvatar=ability:GetOuter()')
 lua.execute('hit(ability:GetOuter());step(1);assert(occurrences(command(),"|hit")==0);hit();hit();step(1);assert(occurrences(command(),"|hit")==1)')
 lua.execute('groundValues.PlayingID=groundValues.PlayingID+1;step(4);hit();step(1);assert(occurrences(command(),"|hit")==2)')
 lua.execute('rootValues.bIsActive=false;rootValues.ChargeCount=0;step(1);hit();step(2)')
@@ -324,9 +321,11 @@ assert target_lua.eval('occurrences(command(),"play4")')==0
 assert target_lua.eval('occurrences(command(),"|hit")')==1
 commands=target_lua.eval('command()')
 assert '|play4' not in commands and '|hit:1' in commands
-assert 'via=marker' in target_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'via=marker' in target_lua.eval('allLogs()')
 target_lua.execute('hit();hit();step(1);assert(occurrences(command(),"|hit")==1);rootValues.bIsActive=false;rootValues.ChargeCount=0;step(1)')
-assert 'HIT_COUNTS marker=3 target=0 matched=1' in target_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'HIT_COUNTS marker=3 matched=1' in target_lua.eval('allLogs()')
 for count in [1,2]:
     target_lua.execute(f'rootValues.bIsActive=true;rootValues.ChargeCount={count};step(1);release(3);hit();groundValues.PlayingID=groundValues.PlayingID+1;step(1);rootValues.bIsActive=false;rootValues.ChargeCount=0;step(1)')
 assert target_lua.eval('occurrences(command(),"|hit")')==1
@@ -350,8 +349,8 @@ assert '|play4:2' in cross_cast.eval('command()')
 assert '|hit:1' in cross_cast.eval('command()') and '|hit:2' not in cross_cast.eval('command()')
 print('PASS old queued hit keeps its cast number and does not suppress the next cast ground sound')
 
-# The actual Trigger fired in-game, but EventActor was null. A component socket
-# can identify the hit character without looking at aim targets or health.
+# Some events omit EventActor. Verify the reflected component-owner fallback
+# as well as the real AActor-valued EventActor tested above.
 body_lua=runtime(setup=r'''
 ownerCalls=0
 bodyOwner=enemy
@@ -370,7 +369,8 @@ function socketHit() nativeHooks[markerPath](nil,liveBullet,socketEvent()) end
 ''')
 body_lua.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount=3;step(1);release(3);socketHit();step(1)')
 assert body_lua.eval('occurrences(command(),"|hit")')==1
-assert 'target=EventBody.Component.GetOwner' in body_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'target=EventBody.Component.GetOwner' in body_lua.eval('allLogs()')
 body_lua.execute('step(2);bodyOwner=ability:GetOuter();socketHit();step(1);bodyOwner=terrain;socketHit();step(1)')
 assert body_lua.eval('occurrences(command(),"|hit")')==1
 body_lua.execute('bodyOwner=enemy;bulletValues.BulletSourceAbility=otherEvent;socketHit();step(1);bulletValues.BulletSourceAbility=ability')
@@ -392,7 +392,8 @@ missing_socket.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount
 assert missing_socket.eval('occurrences(command(),"|hit")')==0
 assert missing_socket.eval('occurrences(command(),"play4")')==1
 assert 'target callback error' not in missing_socket.eval('allLogs()')
-assert 'body_schema=false' in missing_socket.eval('allLogs()')
+if not RELEASE:
+    assert 'body_schema=false' in missing_socket.eval('allLogs()')
 print('PASS missing body schema never reads unverified struct fields; ground audio remains active')
 
 parent_lua=runtime(setup=r'''
@@ -426,25 +427,6 @@ missing_marker.execute('local baseFind=StaticFindObject;StaticFindObject=functio
 assert missing_marker.eval('occurrences(command(),"|hit")')==1
 print('PASS normal game asset loading makes the marker discoverable on a later scan without forced loads')
 
-handler_lua=runtime(setup=r'''
-local cls=makeSchema({BulletSourceAbility='ObjectProperty',BulletOwnerAvatar='ObjectProperty',BulletData='ObjectProperty'})
-local path='/PBZCombatAsset/Prototypes/Bullet/BP_PBZ_ProjectileEmitter.BP_PBZ_ProjectileEmitter_C:OnHitTarget'
-handlerPath=path
-cls.GetFullName=function() return 'BlueprintGeneratedClass Mock.Emitter' end
-cls.ForEachFunction=function(_,fn)
-    fn(makeNativeFunction({{'TargetAvatar','ObjectProperty'}},path))
-    fn(makeNativeFunction({{'TargetAvatar','ObjectProperty'}},path:gsub('OnHitTarget','PreAttack')))
-end
-bulletValues.Schema=cls
-local baseFindAll=FindAllOf
-FindAllOf=function(name) if name=='BP_PBZ_ProjectileEmitter_C' then return {liveBullet} end;return baseFindAll(name) end
-''')
-handler_lua.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount=3;step(1);release(3);nativeHooks[handlerPath](liveBullet,enemy);step(1)')
-assert handler_lua.eval('occurrences(command(),"|hit")')==1
-assert 'via=target' in handler_lua.eval('allLogs()')
-handler_lua.execute('assert(nativeHooks[handlerPath:gsub("OnHitTarget","PreAttack")]==nil)')
-print('PASS concrete Blueprint target handler accepts an actual target; similarly shaped PreAttack method is never hooked')
-
 graph_lua=runtime(setup=r'''
 local dataSchema=makeSchema({})
 dataSchema.GetFullName=function() return 'Class /Script/SGameCombatSystem.BulletDataBase' end
@@ -455,7 +437,7 @@ local events={type=function() return 'UScriptStruct' end,Events=array}
 local root=makeTestObject('PBZ_ProjectileEmitterData /Game/Emitter.Emitter',{StartEvents='StructProperty'},{StartEvents=events})
 bulletAction=makeTestObject('GAA_BulletBurstWithDeflect_C Mock.BP_Renewal_Hun_C.ChiRen.Release_03.Burst',
     {BulletData='ObjectProperty'},{BulletData=root})
-moduleValues.BulletData=child;bulletValues.BulletData=child;bulletValues.BulletSourceAbility=nil
+bulletValues.BulletData=child;bulletValues.BulletSourceAbility=nil
 local baseFind=StaticFindObject
 StaticFindObject=function(path)
     if path=='/Script/SGameCombatSystem.BulletEventsData' then return makeSchema({Events='ArrayProperty'}) end
@@ -463,7 +445,8 @@ StaticFindObject=function(path)
 end
 ''')
 graph_lua.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount=3;step(1);release(3);step(1);hit();step(1);assert(occurrences(command(),"|hit")==1)')
-assert 'depth=2 PBZ_SweepTraceBulletData /Game/Child.Child' in graph_lua.eval('allLogs()')
+if not RELEASE:
+    assert 'depth=2 PBZ_SweepTraceBulletData /Game/Child.Child' in graph_lua.eval('allLogs()')
 print('PASS reflected emitter StartEvents -> sub-bullet data graph matches full-charge child hit even without BulletSourceAbility')
 
 lua.execute('writeFailures["../Runtime/heartbeat.txt"]=true;step(40);assert(actions[1].AkEvent==nil);writeFailures["../Runtime/heartbeat.txt"]=nil;step(1)')
@@ -517,7 +500,7 @@ lua=runtime();lua.execute('step(10);writeFailures["../Runtime/heartbeat.txt"]=tr
 assert 'IPC write timeout heartbeat.txt' in lua.eval('allLogs()')
 print('PASS permanent write denial restores originals instead of retrying forever')
 
-# Native smoke test loads all four WAVs but never sends play, so it emits no sound.
+# Native smoke test loads all six WAVs but never sends play, so it emits no sound.
 with tempfile.TemporaryDirectory(prefix='pbz-stage-host-') as temp:
     ipc=Path(temp);session='20261116-123456-123456'
     (ipc/'heartbeat.txt').write_text(session+'|'+str(int(time.time())),encoding='ascii')
@@ -529,9 +512,11 @@ with tempfile.TemporaryDirectory(prefix='pbz-stage-host-') as temp:
         (ipc/'command.txt').write_text(session+'|1|stop\n'+session+'|2|stop\n'+session+'|3|quit\n',encoding='ascii')
         assert host.wait(timeout=5)==0
         log=(ipc/('host-'+session+'.log')).read_text()
-        assert 'STOP 1' in log and 'STOP 2' in log and 'QUIT 3' in log and 'ERROR' not in log
+        assert 'READY v1.0' in log and 'EXIT' in log and 'ERROR' not in log
+        if not RELEASE:
+            assert 'STOP 1' in log and 'STOP 2' in log and 'QUIT 3' in log
         assert 'PLAY ' not in log
-        print('PASS native four-clip WAV loader; queued IPC consumed in order without audition')
+        print('PASS native six-clip WAV loader; queued IPC consumed in order without audition')
     finally:
         if host.poll() is None:host.terminate();host.wait(timeout=5)
 
@@ -561,24 +546,30 @@ with tempfile.TemporaryDirectory(prefix='pbz-stage-silent-device-') as temp:
         (ipc/'command.txt').write_text(batch,encoding='ascii')
         end=time.monotonic()+5
         while time.monotonic()<end and 'command=13 cast=14' not in log_file.read_text():time.sleep(.01)
-        (ipc/'command.txt').write_text(batch+session+'|14|quit\n',encoding='ascii')
+        (ipc/'command.txt').write_text(batch+session+'|14|hit\n'+session+'|15|play4\n'+session+'|16|quit\n',encoding='ascii')
         assert host.wait(timeout=5)==0
         log=(ipc/('host-'+session+'.log')).read_text()
-        assert all('PLAY clip='+str(n) in log for n in range(1,5)),log
-        assert 'PLAY sequence=12,11 command=6 cast=10' in log,log
-        assert 'STOP_GROUND cast=10 voices=1 remaining=4 command=6' in log,log
-        assert 'STOP_GROUND cast=11 voices=1 remaining=4 command=8' in log,log
-        assert 'SKIP clip=4 reason=hit cast=10 command=7' in log,log
-        assert 'PLAY clip=4 command=9 cast=12' in log,log
-        assert 'STOP_GROUND cast=10 voices=0 remaining=6 command=10' in log,log
-        assert 'PLAY sequence=12,11 command=11 cast=13 prepared=True' in log,log
-        assert 'PLAY sequence=12,11 command=13 cast=14 prepared=True' in log,log
-        assert 'prewarmed_hit_voices=4' in log,log
-        assert log.count('prepared=True')==5,log
-        assert 'ERROR' not in log,log
-        print('PASS native WinMM stops only same-cast 01, skips later 01 after hit, preserves charge/other-cast voices, plays ordered 12->11 (silence only)')
-        import re
-        times=[float(v) for v in re.findall(r'submit_ms=([\d.]+)',log)]
-        print('PASS prepared hit buffers reuse after completion and Stop; silent native dispatch milliseconds:',times)
+        assert 'READY v1.0' in log and 'EXIT' in log and 'ERROR' not in log,log
+        if RELEASE:
+            assert 'PLAY ' not in log and 'submit_ms=' not in log,log
+            print('PASS release WinMM host accepts silent stages/hits, exits cleanly, and omits diagnostic output')
+        else:
+            assert all('PLAY clip='+str(n) in log for n in range(1,5)),log
+            assert 'PLAY sequence=12,11 command=6 cast=10' in log,log
+            assert 'STOP_GROUND cast=10 voices=1 remaining=4 command=6' in log,log
+            assert 'STOP_GROUND cast=11 voices=1 remaining=4 command=8' in log,log
+            assert 'SKIP clip=4 reason=hit cast=10 command=7' in log,log
+            assert 'PLAY clip=4 command=9 cast=12' in log,log
+            assert 'STOP_GROUND cast=10 voices=0 remaining=6 command=10' in log,log
+            assert 'PLAY sequence=12,11 command=11 cast=13 prepared=True' in log,log
+            assert 'PLAY sequence=12,11 command=13 cast=14 prepared=True' in log,log
+            assert 'prewarmed_hit_voices=4' in log,log
+            assert log.count('prepared=True')==5,log
+            assert 'ERROR' not in log,log
+            assert 'command=14' not in log and 'command=15' not in log,log
+            print('PASS native WinMM stops only same-cast 01, skips later 01 after hit, preserves charge/other-cast voices, plays ordered 12->11 (silence only)')
+            import re
+            times=[float(v) for v in re.findall(r'submit_ms=([\d.]+)',log)]
+            print('PASS prepared hit buffers reuse after completion and Stop; silent native dispatch milliseconds:',times)
     finally:
         if host.poll() is None:host.terminate();host.wait(timeout=5)

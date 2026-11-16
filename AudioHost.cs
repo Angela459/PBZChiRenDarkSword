@@ -5,6 +5,10 @@ using System.Threading;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
+[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("v1.0")]
+
 // Independent PCM voices; full-charge hits cancel only their cast's ground clip.
 internal static class AudioHost
 {
@@ -96,6 +100,8 @@ internal static class AudioHost
         if(File.Exists(path)) File.Replace(temp,path,null); else File.Move(temp,path);
     }
     static void Log(string path,string value) { File.AppendAllText(path,DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff")+" "+value+"\r\n"); }
+    [System.Diagnostics.Conditional("DEVELOPMENT")]
+    static void Trace(string path,string value) { Log(path,value); }
     static string ReadShared(string path)
     {
         // File.ReadAllText denies concurrent writers on Windows. Lua publishes
@@ -108,7 +114,7 @@ internal static class AudioHost
     {
         int stopped=0;
         for(int i=voices.Count-1;i>=0;i--) {
-            if(voices[i].Clip!=4 || (cast!=0 && voices[i].Cast!=cast)) continue;
+            if(voices[i].Clip!=4 || voices[i].Cast!=cast) continue;
             voices[i].Dispose(); voices.RemoveAt(i); stopped++;
         }
         return stopped;
@@ -138,7 +144,8 @@ internal static class AudioHost
                 // Idle prepared headers emit no sound; a hit only submits data.
                 for(int i=0;i<4;i++) hitVoices.Add(new Voice(hitSequence,0,0,true));
                 long heartbeat=Now(),readyAt=0,lastSequence=0;
-                Log(log,"READY v0.12 session="+session+" independent_clips=10,02,09,01 hit_sequence=12,11 cancels_same_cast_01=true prewarmed_hit_voices="+hitVoices.Count);
+                Log(log,"READY v1.0 session="+session);
+                Trace(log,"prewarmed_hit_voices="+hitVoices.Count);
                 bool quit=false;
                 while(!quit && Now()-heartbeat<=30) {
                     try {
@@ -157,33 +164,39 @@ internal static class AudioHost
                             int clip=0;
                             bool play=action[0].Length==5 && action[0].StartsWith("play") && int.TryParse(action[0].Substring(4),out clip) && clip>=1 && clip<=4;
                             bool hit=action[0]=="hit";
-                            if(action.Length==2 && !hit && !(play && clip==4)) continue;
+                            if((hit || (play && clip==4)) ? action.Length!=2 : action.Length!=1) continue;
                             if(!play && !hit && action[0]!="stop" && action[0]!="quit") continue;
                             // Lua retains all recent commands, so adjacent stage messages cannot overwrite each other.
                             if(!text.EndsWith("\n") && line==text.Substring(text.LastIndexOf('\n')+1)) continue;
                             lastSequence=seq;
-                            if(p[2]=="stop" || p[2]=="quit") { Stop(voices); Log(log,p[2].ToUpper()+" "+seq); }
+                            if(p[2]=="stop" || p[2]=="quit") { Stop(voices); Trace(log,p[2].ToUpper()+" "+seq); }
                             if(p[2]=="quit") { quit=true; break; }
                             if(play) {
                                 if(clip==4 && cast>0 && hitCasts.Contains(cast)) {
-                                    Log(log,"SKIP clip=4 reason=hit cast="+cast+" command="+seq); continue;
+                                    Trace(log,"SKIP clip=4 reason=hit cast="+cast+" command="+seq); continue;
                                 }
                                 if(voices.Count>=12) Stop(voices);
-                                voices.Add(new Voice(clips[clip-1],clip,cast)); Log(log,"PLAY clip="+clip+" command="+seq+" cast="+cast);
+                                voices.Add(new Voice(clips[clip-1],clip,cast)); Trace(log,"PLAY clip="+clip+" command="+seq+" cast="+cast);
                             }
                             if(hit) {
+#if DEVELOPMENT
                                 var timer=System.Diagnostics.Stopwatch.StartNew();
-                                if(cast>0) hitCasts.Add(cast);
+#endif
+                                hitCasts.Add(cast);
                                 int stopped=StopGround(voices,cast);
+#if DEVELOPMENT
                                 int remaining=voices.Count;
+#endif
                                 if(voices.Count>=12) Stop(voices);
                                 Voice prepared=null;
                                 foreach(var voice in hitVoices) if(!voice.Busy) { prepared=voice;break; }
                                 if(prepared!=null) { prepared.Play(); voices.Add(prepared); }
                                 else voices.Add(new Voice(hitSequence));
+#if DEVELOPMENT
                                 timer.Stop();
-                                Log(log,"STOP_GROUND cast="+cast+" voices="+stopped+" remaining="+remaining+" command="+seq);
-                                Log(log,"PLAY sequence=12,11 command="+seq+" cast="+cast+" prepared="+(prepared!=null)+" submit_ms="+timer.Elapsed.TotalMilliseconds.ToString("F3",System.Globalization.CultureInfo.InvariantCulture));
+                                Trace(log,"STOP_GROUND cast="+cast+" voices="+stopped+" remaining="+remaining+" command="+seq);
+                                Trace(log,"PLAY sequence=12,11 command="+seq+" cast="+cast+" prepared="+(prepared!=null)+" submit_ms="+timer.Elapsed.TotalMilliseconds.ToString("F3",System.Globalization.CultureInfo.InvariantCulture));
+#endif
                             }
                         }
                     } catch(IOException) { }
