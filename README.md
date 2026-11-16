@@ -19,11 +19,13 @@
 1. 退出游戏，从 [Releases](https://github.com/Angela459/PBZChiRenDarkSword/releases/tag/v1.0) 下载 **PBZChiRenDarkSword-v1.0.zip**。
 2. 解压到 `E:\SteamLibrary\steamapps\common\PBZ\platform\steam\ue4ss\Mods\`，然后启动游戏。
 
-解压后的结构为 `Mods/PBZChiRenAudioReplace/Scripts/main.lua`。ZIP 已包含 `enabled.txt` 启用标记，不覆盖现有 `mods.txt`。如以前在 `mods.txt` 中明确将本模组设为 `0`，需改为 `1`。
+解压后的结构为 `Mods/PBZChiRenDarkSword/Scripts/main.lua`。ZIP 已包含 `enabled.txt` 启用标记，不覆盖现有 `mods.txt`。如以前在 `mods.txt` 中明确将本模组设为 `0`，需改为 `1`。
 
 首次启动会自动创建 `Runtime/`，不需要手动建目录。请下载命名的安装 ZIP；GitHub 自动生成的 Source code 压缩包是仓库源码。
 
-卸载时退出游戏，删除 `Mods/PBZChiRenAudioReplace/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
+卸载时退出游戏，删除 `Mods/PBZChiRenDarkSword/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
+
+从旧版升级时，先删除 `Mods/PBZChiRenAudioReplace/`，移除 `mods.txt` 的旧名称条目，并删除曾手动放置的 `ProjectPBZ/Content/JavaScript/PBZModsMenu/Mods/PBZChiRenAudioReplace/`，避免旧、新两份同时运行。旧版 `~mods/PBZChiRenAudioReplace.txt` 不再使用；如需保持关闭状态，修改新 JSON。
 
 ## 播放器与音频格式
 
@@ -35,9 +37,9 @@
 
 ## 可选开关
 
-默认无需菜单组件即可运行。[可选菜单集成](https://github.com/Angela459/PBZChiRenDarkSword/blob/main/Menu/README.md)单独提供，不包含在基础安装 ZIP 中。
+默认无需菜单组件即可运行。ZIP 已包含标准的 UE4SS 配置和菜单描述文件，支持自动发现，不需要手动复制 JavaScript 或修改菜单核心。可选菜单的显示和写入条件见 [菜单接入说明](https://github.com/Angela459/PBZChiRenDarkSword/blob/main/docs/Menu.md)。
 
-如已有保存的配置，仍遵从 `ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt` 中的 `Enabled=On/Off`。关闭会停止自定义声音并恢复本模组修改的原声引用；无配置时默认开启。
+开关位于模组目录内的 `PBZChiRenDarkSword.config.json`，默认 `"Enabled": true`，改为 `false` 会停止自定义声音并恢复本模组修改的原声引用。已安装 PBZ Mods Menu 和它的可选 UE4SS Bridge 时，菜单自动提供“炽♂刃音效”栏目，只有一个“启用”开关；不需要菜单也能使用音效。
 
 ## 原理与限制
 

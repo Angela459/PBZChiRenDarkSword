@@ -1,0 +1,13 @@
+{
+  "title": {
+    "en": "Chi♂Ren Audio",
+    "zh-Hans": "炽♂刃音效",
+    "zh-Hant": "熾♂刃音效"
+  },
+  "description": {
+    "en": "Custom charge and impact sounds. Enabled toggles replacement; changes apply immediately.",
+    "zh-Hans": "启用：使用替换音效；关闭：恢复原声。满蓄命中敌人播放 12→11，其余砸地播放 01。",
+    "zh-Hant": "啟用：使用替換音效；關閉：恢復原聲。滿蓄命中敵人播放 12→11，其餘砸地播放 01。"
+  },
+  "version": "1.0"
+}
