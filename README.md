@@ -42,42 +42,8 @@
 - 每次施放有独立编号，只取消该次 01。如果 01 在实际命中前已经播出一小段，已听到的部分无法撤回；不会为了预测命中而延迟空挥的 01。
 - 输出使用 Windows 系统默认音频设备和音量，不跟随游戏音效音量或暂停状态。原生接口和游戏更新兼容性仍取决于当前 UE4SS/游戏构建。
 
-## 开发与验证
+## 分支
 
-本分支为 `dev`，版本 **v1.0**。保留播放器源码、详细运行日志、构建工具和回归测试；`main` 仅保留正式运行与安装文件。开发版与正式版的音频和触发行为一致。
+`main` 为 v1.0 安装版本，仅保留运行、音频及安装所需文件。源码构建、详细日志及回归测试见 [dev 分支](https://github.com/Angela459/PBZChiRenDarkSword/tree/dev)。
 
-Windows 下使用 Python 3.9+ 和系统 .NET Framework 编译带详细日志的播放器：
-
-```powershell
-python tools/build.py dev
-```
-
-Python 依赖与检查：
-
-```powershell
-python -m pip install -r tests/requirements.txt
-python tests/check_replace.py
-node tests/check_menu.js "已打补丁的 Mods Menu 核心 main.js 路径"
-```
-
-测试包含本仓库内的 Unreal 模拟，无需旁边的探针项目。原生音频检查使用全零 PCM，不试听素材；覆盖连续施放、满蓄命中、01 抑制、回调即时提交、通道复用、开关持久化和通信冲突恢复。模拟检查不能代替真实游戏测试。
-
-运行日志位于安装目录的 `Runtime/run-*.log` 和 `Runtime/host-*.log`。命中记录 `PLAY sequence=12,11 dispatch=callback`；播放器记录 `STOP_GROUND`、`prepared=True` 和 `submit_ms`，可区分命中检测与播放提交的延迟。运行日志、临时研究输出和旧的拼接音频不上传到仓库。
-## 生成 main 安装版本
-
-```powershell
-python tools/build.py release "仓库之外的全新输出目录"
-```
-
-构建会删除 Lua/菜单中的 `DEV-BEGIN` 至 `DEV-END` 诊断区段，并编译关闭 `DEVELOPMENT` 的播放器。输出不包含测试、构建工具或 C# 源文件，不会改动当前分支。安装需要的菜单补丁脚本仍然保留。
-
-对输出执行同一套行为检查（PowerShell）：
-
-```powershell
-$env:PBZ_TEST_ROOT = "生成的输出目录"
-python tests/check_replace.py
-node tests/check_menu.js "已打补丁的 Mods Menu 核心 main.js 路径"
-Remove-Item Env:PBZ_TEST_ROOT
-```
-
-正式版检查仍覆盖 Lua 音频命令、菜单、恢复机制和静音原生播放路径，仅跳过正式版已移除的诊断输出断言。
+运行故障日志位于模组目录的 `Runtime/`；正式版不记录逐次播放、接口枚举或性能计时。
