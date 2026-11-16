@@ -46,8 +46,10 @@ actions[10]=object('GAA_PlaySound_Opt_C Mock.BP_Renewal_Hun_C.ChiRen.Release_03.
 missingOne,hostMissing,noHooks=false,false,false
 readyOverride=nil
 writeFailures={}
+runtimeExists=false
 local baseOpen=io.open
 io.open=function(path,mode)
+    if path:find('../Runtime/',1,true) and not runtimeExists then return nil,'directory does not exist' end
     if mode=='w' and writeFailures[path] then return nil,'simulated Windows sharing violation' end
     if mode=='r' and path=='../Runtime/ready.txt' and readyOverride~=nil then
         if readyOverride=='missing' then return nil end
@@ -97,7 +99,9 @@ RegisterKeyBind=function() error('Audio replacement must not register hotkeys') 
 LoopInGameThreadWithDelay=function(ms,fn) assert(ms==50);pump=fn;return 1 end
 os.execute=function(cmd)
     assert(cmd:find('Start%-Process') and cmd:find('WindowStyle Hidden'))
-    hostSession=files['../Runtime/heartbeat.txt']:match('^([^|]+)')
+    assert(cmd:find('[System.IO.Directory]::CreateDirectory',1,true))
+    runtimeExists=true
+    hostSession=assert(cmd:match(",'([^']+)'%) %-WindowStyle Hidden"))
     if not hostMissing then files['../Runtime/ready.txt']=hostSession..'|ready|'..math.floor(clock) end
     return true
 end
@@ -184,11 +188,11 @@ def runtime(initial=None,setup=None):
     return lua
 
 lua=runtime()
-lua.execute('step(1);assert(hostSession~=nil);step(7);assert(calls>0);for i=1,9 do assert(actions[i].AkEvent==nil) end;assert(actions[10].AkEvent==otherEvent)')
+lua.execute('step(1);assert(hostSession~=nil and runtimeExists);assert(files["../Runtime/heartbeat.txt"]);step(7);assert(calls>0);for i=1,9 do assert(actions[i].AkEvent==nil) end;assert(actions[10].AkEvent==otherEvent)')
 assert 'ARMED stage-driven' in lua.eval('allLogs()')
 if not RELEASE:
     assert 'PlayTimeline params=Timeline' in lua.eval('allLogs()')
-print('PASS immediate default-on, both actual timeline signatures verified; nine target refs muted')
+print('PASS clean install creates Runtime before IPC writes; immediate default-on, verified timeline signatures and nine muted refs')
 lua.execute('rootValues.bIsActive=true;step(1);assert(not command():find("play",1,true))')
 for stage in [1,2,3]:
     lua.execute(f'rootValues.ChargeCount={stage};step(1)')
@@ -502,13 +506,14 @@ print('PASS permanent write denial restores originals instead of retrying foreve
 
 # Native smoke test loads all six WAVs but never sends play, so it emits no sound.
 with tempfile.TemporaryDirectory(prefix='pbz-stage-host-') as temp:
-    ipc=Path(temp);session='20261116-123456-123456'
-    (ipc/'heartbeat.txt').write_text(session+'|'+str(int(time.time())),encoding='ascii')
+    ipc=Path(temp)/'Runtime';session='20261116-123456-123456'
+    assert not ipc.exists()
     host=subprocess.Popen([str(ROOT/'AudioHost.exe'),str(ipc),session],creationflags=subprocess.CREATE_NO_WINDOW)
     try:
         end=time.monotonic()+5
         while time.monotonic()<end and not(ipc/'ready.txt').exists():time.sleep(.05)
         assert(ipc/'ready.txt').read_text().startswith(session+'|ready|')
+        (ipc/'heartbeat.txt').write_text(session+'|'+str(int(time.time())),encoding='ascii')
         (ipc/'command.txt').write_text(session+'|1|stop\n'+session+'|2|stop\n'+session+'|3|quit\n',encoding='ascii')
         assert host.wait(timeout=5)==0
         log=(ipc/('host-'+session+'.log')).read_text()
@@ -516,7 +521,7 @@ with tempfile.TemporaryDirectory(prefix='pbz-stage-host-') as temp:
         if not RELEASE:
             assert 'STOP 1' in log and 'STOP 2' in log and 'QUIT 3' in log
         assert 'PLAY ' not in log
-        print('PASS native six-clip WAV loader; queued IPC consumed in order without audition')
+        print('PASS native host creates missing Runtime and loads six WAVs; queued IPC consumed in order without audition')
     finally:
         if host.poll() is None:host.terminate();host.wait(timeout=5)
 

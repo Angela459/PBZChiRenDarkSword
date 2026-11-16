@@ -5,11 +5,15 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 CSC = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 FILES = ('.gitattributes', '.gitignore', 'README.md', 'audio-manifest.json',
-         'Menu/main.js', 'Menu/patch_menu_core.py', 'Scripts/main.lua')
+         'Menu/main.js', 'Menu/README.md', 'Menu/patch_menu_core.py', 'Scripts/main.lua', 'enabled.txt')
+AUDIO_FILES = ('1_10.wav', '2_02.wav', '3_09.wav', '4_01.wav', '5_12.wav', '6_11.wav')
+PACKAGE_FILES = ('Scripts/main.lua', 'AudioHost.exe', 'enabled.txt', 'README.md',
+                 'audio-manifest.json') + tuple('Audio/' + name for name in AUDIO_FILES)
 
 
 def strip_dev(source, prefix):
@@ -71,10 +75,23 @@ def release(destination):
         with target.open('w', encoding='utf-8', newline='\n') as stream:
             stream.write(text)
     (destination / 'Audio').mkdir()
-    for name in ('1_10.wav', '2_02.wav', '3_09.wav', '4_01.wav', '5_12.wav', '6_11.wav'):
+    for name in AUDIO_FILES:
         shutil.copy2(ROOT / 'Audio' / name, destination / 'Audio' / name)
     compile_host(destination / 'AudioHost.exe')
     print('Release v1.0: ' + str(destination))
+
+
+def package(source, destination):
+    source, destination = Path(source).resolve(), Path(destination).resolve()
+    for relative in PACKAGE_FILES:
+        if not (source / relative).is_file():
+            raise ValueError('Missing release file: ' + relative)
+    if 'DEV-BEGIN' in (source / 'Scripts/main.lua').read_text(encoding='utf-8'):
+        raise ValueError('Package a release build, not a development checkout')
+    with zipfile.ZipFile(destination, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for relative in PACKAGE_FILES:
+            archive.write(source / relative, 'PBZChiRenAudioReplace/' + relative)
+    print('Install ZIP v1.0: ' + str(destination))
 
 
 if __name__ == '__main__':
@@ -83,5 +100,7 @@ if __name__ == '__main__':
         print('Development v1.0 host built')
     elif len(sys.argv) == 3 and sys.argv[1] == 'release':
         release(sys.argv[2])
+    elif len(sys.argv) == 4 and sys.argv[1] == 'package':
+        package(sys.argv[2], sys.argv[3])
     else:
-        raise SystemExit('Usage: python tools/build.py dev | release NEW_OUTPUT_DIRECTORY')
+        raise SystemExit('Usage: python tools/build.py dev | release NEW_OUTPUT_DIRECTORY | package RELEASE_DIRECTORY ZIP_PATH')

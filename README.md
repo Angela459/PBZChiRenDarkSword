@@ -1,6 +1,6 @@
 # PBZChiRenDarkSword v1.0 — 炽♂刃音效
 
-《影之刃零》炽刃大招音效模组。基于 UE4SS 读取技能节点，用本地播放器播放替换音频，提供模组菜单开关。默认开启。
+《影之刃零》炽刃大招音效模组。基于 UE4SS 读取技能节点，用本地播放器播放替换音频。默认开启。
 
 | 游戏节点 | 自定义音频 |
 | --- | --- |
@@ -14,24 +14,30 @@
 
 ## 安装
 
-需要已在当前游戏版本正常工作的 UE4SS 和 PBZ Mods Menu。项目目录名为 `PBZChiRenDarkSword`；为兼容已有安装和保存的开关，游戏内技术 ID 保持 `PBZChiRenAudioReplace`。
+仅需已在当前游戏版本正常工作的 UE4SS。
 
-退出游戏后，以游戏根目录 `<PBZ>` 为基准：
+1. 退出游戏，从 [Releases](https://github.com/Angela459/PBZChiRenDarkSword/releases/tag/v1.0) 下载 **PBZChiRenDarkSword-v1.0.zip**。
+2. 解压到 `E:\SteamLibrary\steamapps\common\PBZ\platform\steam\ue4ss\Mods\`，然后启动游戏。
 
-1. 建立 `<PBZ>/platform/steam/ue4ss/Mods/PBZChiRenAudioReplace/`，把本仓库的 `Scripts/`、`Audio/`、`AudioHost.exe` 放进去，并在该模组目录内建立空的 `Runtime/` 文件夹。
-2. 在 UE4SS 的 `Mods/mods.txt` 中添加或确认 `PBZChiRenAudioReplace : 1`。旧探针 `PBZChiRenAudioProbe` 如存在则设为 `0`，避免重复安装音频模组。
-3. 把 `Menu/main.js` 放到 `<PBZ>/ProjectPBZ/Content/JavaScript/PBZModsMenu/Mods/PBZChiRenAudioReplace/main.js`。
-4. 如需菜单里只有一个开关、没有“恢复默认”行，可对 Mods Menu **0.9.8** 应用可选补丁。先备份其 `Mods/PBZModsMenu/main.js`，再运行：
+解压后的结构为 `Mods/PBZChiRenAudioReplace/Scripts/main.lua`。ZIP 已包含 `enabled.txt` 启用标记，不覆盖现有 `mods.txt`。如以前在 `mods.txt` 中明确将本模组设为 `0`，需改为 `1`。
 
-   ```powershell
-   python Menu/patch_menu_core.py "菜单核心 main.js 的路径" "打补丁后的 main.js 路径"
-   ```
+首次启动会自动创建 `Runtime/`，不需要手动建目录。请下载命名的安装 ZIP；GitHub 自动生成的 Source code 压缩包是仓库源码。
 
-   脚本遇到不认识的核心版本会拒绝修改。将输出替换回核心路径；已经应用过则不必重复。
+卸载时退出游戏，删除 `Mods/PBZChiRenAudioReplace/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
 
-进入游戏后，在与“设置”并列的 **炽♂刃音效** 栏目展开唯一的“启用”开关。选择自动保存在 `ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt`，支持 `Enabled=On/Off`；无配置时默认开启。
+## 播放器与音频格式
 
-关闭开关会停止自定义声音并恢复本模组修改过的原声引用。卸载时退出游戏，移除上述模组目录、菜单描述目录及 `mods.txt` 对应启用项即可。
+`AudioHost.exe` 是本项目编译的 Windows 后台播放器，由 Lua 自动启动。Lua 负责识别游戏节点、临时清空指定原声引用并发送播放指令；播放器通过 Windows WinMM 播放自定义声音，支持多个声音并行、停止本次 01，以及无间隔衔接 12→11。
+
+六段声音使用 **WAV / PCM 16 位 / 单声道 / 48 kHz**，合计约 **517 KiB**。短音效无需运行时解码，便于提前准备播放缓冲。MP3/OGG 可进一步压缩，但需要额外解码实现；现有资源很小，保留 PCM 更合适。由 MP3 转出的 WAV 不会提升原始音质。
+
+`Runtime/` 存放 Lua 与播放器之间的指令、心跳和日志。退出游戏后可删除，下次启用时会自动重建。
+
+## 可选开关
+
+默认无需菜单组件即可运行。[可选菜单集成](https://github.com/Angela459/PBZChiRenDarkSword/blob/main/Menu/README.md)单独提供，不包含在基础安装 ZIP 中。
+
+如已有保存的配置，仍遵从 `ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt` 中的 `Enabled=On/Off`。关闭会停止自定义声音并恢复本模组修改的原声引用；无配置时默认开启。
 
 ## 原理与限制
 
@@ -60,16 +66,18 @@ python tests/check_replace.py
 node tests/check_menu.js "已打补丁的 Mods Menu 核心 main.js 路径"
 ```
 
-测试包含本仓库内的 Unreal 模拟，无需旁边的探针项目。原生音频检查使用全零 PCM，不试听素材；覆盖连续施放、满蓄命中、01 抑制、回调即时提交、通道复用、开关持久化和通信冲突恢复。模拟检查不能代替真实游戏测试。
+测试包含本仓库内的 Unreal 模拟。原生音频检查使用全零 PCM，不试听素材；覆盖首次启动自动建目录、连续施放、满蓄命中、01 抑制、回调即时提交、通道复用、开关持久化和通信冲突恢复。模拟检查不能代替真实游戏测试。
 
 运行日志位于安装目录的 `Runtime/run-*.log` 和 `Runtime/host-*.log`。命中记录 `PLAY sequence=12,11 dispatch=callback`；播放器记录 `STOP_GROUND`、`prepared=True` 和 `submit_ms`，可区分命中检测与播放提交的延迟。运行日志、临时研究输出和旧的拼接音频不上传到仓库。
 ## 生成 main 安装版本
 
 ```powershell
 python tools/build.py release "仓库之外的全新输出目录"
+python tools/build.py package "生成的输出目录" "PBZChiRenDarkSword-v1.0.zip 的输出路径"
+python tests/check_package.py "PBZChiRenDarkSword-v1.0.zip 的路径"
 ```
 
-构建会删除 Lua/菜单中的 `DEV-BEGIN` 至 `DEV-END` 诊断区段，并编译关闭 `DEVELOPMENT` 的播放器。输出不包含测试、构建工具或 C# 源文件，不会改动当前分支。安装需要的菜单补丁脚本仍然保留。
+构建会删除 Lua/菜单中的 `DEV-BEGIN` 至 `DEV-END` 诊断区段，并编译关闭 `DEVELOPMENT` 的播放器。输出不包含测试、构建工具或 C# 源文件，不会改动当前分支。打包只包含一个 `PBZChiRenAudioReplace/` 目录及运行、说明文件和启用标记，不包含菜单集成或 Runtime 数据。将 ZIP 上传到 GitHub Releases 的 `v1.0` 发布页。
 
 对输出执行同一套行为检查（PowerShell）：
 
