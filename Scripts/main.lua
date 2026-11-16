@@ -4,7 +4,7 @@ local MOD="PBZChiRenAudioReplace"
 local source=debug.getinfo(1,"S").source:gsub("^@","")
 local root=(source:match("^(.*[\\/])") or "").."../"
 local session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
-local output=io.open(root.."Runtime/run-"..session..".log","a")
+local output
 local enabled,waiting,ability,lastActive=false,false,nil,false
 local desired,ticks,faulted=true,0,false
 local settingsPath=root.."../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt"
@@ -435,12 +435,13 @@ local function enable()
     session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
     history={};sequence=0;startedAt=os.time();nextHeartbeat=0;nextDiscover=0;waiting=true
     lastHostBeat,hostReadMiss=nil,false
-    ipcFailures={};dirtyCommands=not writeText("command.txt","")
-    writeText("heartbeat.txt",session.."|"..os.time())
     local exe,ipc=root.."AudioHost.exe",root.."Runtime"
     if exe:find("'",1,true) or ipc:find("'",1,true) then error("unsupported install path") end
-    local ps="Start-Process -FilePath '"..exe.."' -ArgumentList @('"..ipc.."','"..session.."') -WindowStyle Hidden"
+    local ps="[System.IO.Directory]::CreateDirectory('"..ipc.."') | Out-Null; Start-Process -FilePath '"..exe.."' -ArgumentList @(([string][char]34 + '"..ipc.."' + [char]34),'"..session.."') -WindowStyle Hidden"
     os.execute('powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "'..ps..'"')
+    if not output then output=io.open(root.."Runtime/run-"..session..".log","a") end
+    ipcFailures={};dirtyCommands=not writeText("command.txt","")
+    writeText("heartbeat.txt",session.."|"..os.time())
     log("HOST_LAUNCH default replacement")
 end
 local function discover()
