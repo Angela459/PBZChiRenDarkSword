@@ -1,0 +1,56 @@
+[
+  {
+    "order": 1,
+    "source": "10.mp3",
+    "wav": "Audio/1_10.wav",
+    "trigger": "ChargeCount=1",
+    "duration": 0.576,
+    "format": "PCM s16le mono 48000 Hz",
+    "sha256": "637c1237639fc8bb3978eba5cca3a7395492c3f9987ca503e30cf6e4f697114b"
+  },
+  {
+    "order": 2,
+    "source": "02.mp3",
+    "wav": "Audio/2_02.wav",
+    "trigger": "ChargeCount=2",
+    "duration": 0.84,
+    "format": "PCM s16le mono 48000 Hz",
+    "sha256": "d5dbf3bd9bae4301ecd43ea40288c2572250dc1f8c00bab1c5026e64fe8b600d"
+  },
+  {
+    "order": 3,
+    "source": "09.mp3",
+    "wav": "Audio/3_09.wav",
+    "trigger": "ChargeCount=3",
+    "duration": 0.72,
+    "format": "PCM s16le mono 48000 Hz",
+    "sha256": "ed3c25f9d0b2c4c323cb543f6f7ced131daca8d534ef48b86c3df0f31431e7eb"
+  },
+  {
+    "order": 4,
+    "source": "01.mp3",
+    "wav": "Audio/4_01.wav",
+    "trigger": "Ground impact unless full-charge hit",
+    "duration": 1.272,
+    "format": "PCM s16le mono 48000 Hz",
+    "sha256": "08e100132d78cdb14ca2d75a8c5dc4928185e40e4c8ec0898b9e2558db8a86ca"
+  },
+  {
+    "order": 5,
+    "source": "12-00.00.00.201-00.00.01.128.mp3",
+    "wav": "Audio/5_12.wav",
+    "trigger": "Full-charge enemy hit, followed by 11",
+    "duration": 0.8496875,
+    "format": "PCM s16le mono 48000 Hz",
+    "sha256": "51fb8247a55ad6382cafc3f716e1dc8317cd7a68c71a84480372bb4c9092982c"
+  },
+  {
+    "order": 6,
+    "source": "11.mp3",
+    "wav": "Audio/6_11.wav",
+    "trigger": "After 12 completes",
+    "duration": 1.248,
+    "format": "PCM s16le mono 48000 Hz",
+    "sha256": "e3409b0fe2830a9233117ecf28c665126424dfe1562d7d93ece77faddf5fa07d"
+  }
+]
