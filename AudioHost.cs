@@ -129,7 +129,7 @@ internal static class AudioHost
         var voices=new List<Voice>();
         var hitVoices=new List<Voice>();
         var hitCasts=new HashSet<long>();
-        using(var mutex=new Mutex(false,"Local\\PBZChiRenAudio-"+session)) {
+        using(var mutex=new Mutex(false,"Local\\PBZChiRenDarkSword-"+session)) {
             if(!mutex.WaitOne(0)) return 0;
             try {
                 var clips=new List<byte[]>();

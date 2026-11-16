@@ -19,11 +19,13 @@
 1. 退出游戏，从 [Releases](https://github.com/Angela459/PBZChiRenDarkSword/releases/tag/v1.0) 下载 **PBZChiRenDarkSword-v1.0.zip**。
 2. 解压到 `E:\SteamLibrary\steamapps\common\PBZ\platform\steam\ue4ss\Mods\`，然后启动游戏。
 
-解压后的结构为 `Mods/PBZChiRenAudioReplace/Scripts/main.lua`。ZIP 已包含 `enabled.txt` 启用标记，不覆盖现有 `mods.txt`。如以前在 `mods.txt` 中明确将本模组设为 `0`，需改为 `1`。
+解压后的结构为 `Mods/PBZChiRenDarkSword/Scripts/main.lua`。ZIP 已包含 `enabled.txt` 启用标记，不覆盖现有 `mods.txt`。如以前在 `mods.txt` 中明确将本模组设为 `0`，需改为 `1`。
 
 首次启动会自动创建 `Runtime/`，不需要手动建目录。请下载命名的安装 ZIP；GitHub 自动生成的 Source code 压缩包是仓库源码。
 
-卸载时退出游戏，删除 `Mods/PBZChiRenAudioReplace/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
+卸载时退出游戏，删除 `Mods/PBZChiRenDarkSword/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
+
+从旧版升级时，先删除 `Mods/PBZChiRenAudioReplace/`，移除 `mods.txt` 的旧名称条目，并删除曾手动放置的 `ProjectPBZ/Content/JavaScript/PBZModsMenu/Mods/PBZChiRenAudioReplace/`，避免旧、新两份同时运行。旧版 `~mods/PBZChiRenAudioReplace.txt` 不再使用；如需保持关闭状态，修改新 JSON。
 
 ## 播放器与音频格式
 
@@ -35,9 +37,9 @@
 
 ## 可选开关
 
-默认无需菜单组件即可运行。[可选菜单集成](https://github.com/Angela459/PBZChiRenDarkSword/blob/main/Menu/README.md)单独提供，不包含在基础安装 ZIP 中。
+默认无需菜单组件即可运行。ZIP 已包含标准的 UE4SS 配置和菜单描述文件，支持自动发现，不需要手动复制 JavaScript 或修改菜单核心。可选菜单的显示和写入条件见 [菜单接入说明](https://github.com/Angela459/PBZChiRenDarkSword/blob/main/docs/Menu.md)。
 
-如已有保存的配置，仍遵从 `ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt` 中的 `Enabled=On/Off`。关闭会停止自定义声音并恢复本模组修改的原声引用；无配置时默认开启。
+开关位于模组目录内的 `PBZChiRenDarkSword.config.json`，默认 `"Enabled": true`，改为 `false` 会停止自定义声音并恢复本模组修改的原声引用。已安装 PBZ Mods Menu 和它的可选 UE4SS Bridge 时，菜单自动提供“炽♂刃音效”栏目，只有一个“启用”开关；不需要菜单也能使用音效。
 
 ## 原理与限制
 
@@ -63,7 +65,7 @@ Python 依赖与检查：
 ```powershell
 python -m pip install -r tests/requirements.txt
 python tests/check_replace.py
-node tests/check_menu.js "已打补丁的 Mods Menu 核心 main.js 路径"
+node tests/check_menu.js "Mods Menu 核心 main.js 路径"
 ```
 
 测试包含本仓库内的 Unreal 模拟。原生音频检查使用全零 PCM，不试听素材；覆盖首次启动自动建目录、连续施放、满蓄命中、01 抑制、回调即时提交、通道复用、开关持久化和通信冲突恢复。模拟检查不能代替真实游戏测试。
@@ -77,15 +79,15 @@ python tools/build.py package "生成的输出目录" "PBZChiRenDarkSword-v1.0.z
 python tests/check_package.py "PBZChiRenDarkSword-v1.0.zip 的路径"
 ```
 
-构建会删除 Lua/菜单中的 `DEV-BEGIN` 至 `DEV-END` 诊断区段，并编译关闭 `DEVELOPMENT` 的播放器。输出不包含测试、构建工具或 C# 源文件，不会改动当前分支。打包只包含一个 `PBZChiRenAudioReplace/` 目录及运行、说明文件和启用标记，不包含菜单集成或 Runtime 数据。将 ZIP 上传到 GitHub Releases 的 `v1.0` 发布页。
+构建会删除 Lua 中的 `DEV-BEGIN` 至 `DEV-END` 诊断区段，并编译关闭 `DEVELOPMENT` 的播放器。输出不包含测试、构建工具或 C# 源文件，不会改动当前分支。打包只包含一个 `PBZChiRenDarkSword/` 目录及运行、配置、菜单描述、说明文件和启用标记，不包含 JavaScript 菜单脚本或 Runtime 数据。将 ZIP 上传到 GitHub Releases 的 `v1.0` 发布页。
 
 对输出执行同一套行为检查（PowerShell）：
 
 ```powershell
 $env:PBZ_TEST_ROOT = "生成的输出目录"
 python tests/check_replace.py
-node tests/check_menu.js "已打补丁的 Mods Menu 核心 main.js 路径"
+node tests/check_menu.js "Mods Menu 核心 main.js 路径"
 Remove-Item Env:PBZ_TEST_ROOT
 ```
 
-正式版检查仍覆盖 Lua 音频命令、菜单、恢复机制和静音原生播放路径，仅跳过正式版已移除的诊断输出断言。
+正式版检查仍覆盖 Lua 音频命令、JSON 菜单自动发现、恢复机制和静音原生播放路径，仅跳过正式版已移除的诊断输出断言。

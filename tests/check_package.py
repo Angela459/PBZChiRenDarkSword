@@ -28,13 +28,14 @@ with tempfile.TemporaryDirectory(prefix='pbz-clean-install-') as temp:
     with zipfile.ZipFile(sys.argv[1]) as archive:
         assert archive.testzip() is None
         names = archive.namelist()
-        expected={'Scripts/main.lua','AudioHost.exe','enabled.txt','README.md','audio-manifest.json'}
+        expected={'Scripts/main.lua','AudioHost.exe','enabled.txt','README.md','audio-manifest.json',
+                  'PBZChiRenDarkSword.config.json','PBZChiRenDarkSword.modsmenu.json'}
         expected.update('Audio/'+name for name in ('1_10.wav','2_02.wav','3_09.wav','4_01.wav','5_12.wav','6_11.wav'))
-        assert set(names)=={'PBZChiRenAudioReplace/'+name for name in expected}
+        assert set(names)=={'PBZChiRenDarkSword/'+name for name in expected}
         assert not any('/Runtime/' in n or '/Menu/' in n or '/tests/' in n for n in names)
-        assert 'PBZChiRenAudioReplace/enabled.txt' in names
+        assert 'PBZChiRenDarkSword/enabled.txt' in names
         archive.extractall(mods)
-    root = mods / 'PBZChiRenAudioReplace'
+    root = mods / 'PBZChiRenDarkSword'
     assert not (root / 'Runtime').exists()
     for entry in json.loads((root / 'audio-manifest.json').read_text(encoding='utf-8')):
         assert hashlib.sha256((root / entry['wav']).read_bytes()).hexdigest() == entry['sha256']
@@ -62,6 +63,11 @@ with tempfile.TemporaryDirectory(prefix='pbz-clean-install-') as temp:
         log = logs[0].read_text()
         assert 'HOST_READY' in log and 'IPC_WRITE_RETRY' not in log, log
         print('PASS clean ZIP without menu, Runtime or mods.txt creates its directory and starts the real host from a path with spaces')
+        (root / 'PBZChiRenDarkSword.config.json').write_text('{"Enabled":false}\n', encoding='utf-8')
+        for _ in range(5):
+            lua.globals().step()
+        assert 'ORIGINAL menu off' in logs[0].read_text()
+        print('PASS actual mod-local JSON changes stop replacement without JavaScript or the legacy ~mods config')
     finally:
         if session:
             (ipc / 'command.txt').write_text(session + '|1|quit\n', encoding='ascii')

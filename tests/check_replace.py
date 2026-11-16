@@ -173,7 +173,8 @@ function allLogs() local out='';for path,value in pairs(files) do if path:match(
 function command() return files['../Runtime/command.txt'] or '' end
 function occurrences(s,word) local n=0;for _ in s:gmatch(word) do n=n+1 end;return n end
 function menu(value)
-    files['../'..'../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt']='; ChiRen sound settings\r\nEnabled='..value..'\r\n'
+    local v=value=='On' and 'true' or (value=='Off' and 'false' or '')
+    files['../PBZChiRenDarkSword.config.json']='{\n  \"Enabled\": '..v..'\n}'
 end
 '''
 
@@ -472,18 +473,25 @@ print('PASS saved Off prevents host launch, native scans, and all replacement af
 
 for encoding in ('utf-8-sig', 'utf-16-le', 'utf-16-be'):
     lua=runtime('Off')
-    text='; persistent settings\r\nEnabled=On ; custom sound\r\n'
+    text='{\r\n  "Enabled": true\r\n}\r\n'
     data=text.encode(encoding)
     if encoding=='utf-16-le': data=b'\xff\xfe'+data
     if encoding=='utf-16-be': data=b'\xfe\xff'+data
     lua.globals().encodedConfig=''.join(chr(b) for b in data)
     # Lua strings encode characters as UTF-8, so build the original bytes directly.
     lua.execute('encodedConfig=string.char('+','.join(str(b) for b in data)+')')
-    lua.execute("files['../../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt']=encodedConfig;step(8);assert(actions[1].AkEvent==nil)")
+    lua.execute("files['../PBZChiRenDarkSword.config.json']=encodedConfig;step(8);assert(actions[1].AkEvent==nil)")
 print('PASS UTF-8 BOM and UTF-16 menu settings decode correctly')
 
 lua=runtime('Off');lua.execute('step(5);menu("O");step(5);assert(hostSession==nil);menu("On");step(8);assert(actions[1].AkEvent==nil)')
-print('PASS incomplete menu writes preserve current setting')
+print('PASS incomplete JSON menu writes preserve current setting')
+
+for invalid in ('{"Enabled": "false"}', '{"Enabled": 0}', '{"Enabled": false,}', '{"Enabled": false}garbage', '{"Enabled": true, "Enabled": false}'):
+    lua=runtime('Off')
+    lua.execute('step(5);assert(hostSession==nil)')
+    lua.globals().badConfig=invalid
+    lua.execute("files['../PBZChiRenDarkSword.config.json']=badConfig;step(8);assert(hostSession==nil)")
+print('PASS malformed, duplicate-key and nonboolean JSON never changes the active mode')
 
 for setup,expected in [('noHooks=true','release timeline hook unavailable'),
                        ('missingOne=true','WAIT Release_03'),('hostMissing=true','host startup timeout')]:

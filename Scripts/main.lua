@@ -1,13 +1,13 @@
 -- ChargeCount drives 10/02/09. A real ground sound is required for 01.
 -- Ground plays 01 immediately unless this cast has hit; a later hit stops its 01.
-local MOD="PBZChiRenAudioReplace"
+local MOD="PBZChiRenDarkSword"
 local source=debug.getinfo(1,"S").source:gsub("^@","")
 local root=(source:match("^(.*[\\/])") or "").."../"
 local session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
 local output
 local enabled,waiting,ability,lastActive=false,false,nil,false
 local desired,ticks,faulted=true,0,false
-local settingsPath=root.."../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenAudioReplace.txt"
+local settingsPath=root.."PBZChiRenDarkSword.config.json"
 local patched,held,history={},{},{}
 local timelineRegistered=false
 local sequence,nextDiscover,nextHeartbeat,startedAt=0,0,0,0
@@ -188,21 +188,17 @@ local function readMenuSetting()
     local f=io.open(settingsPath,"rb")
     if not f then return nil end
     local s=f:read("*a");f:close()
-    -- EasyCsv may write UTF-8 or UTF-16. Only an ASCII key/value is interpreted.
+    -- The menu bridge atomically replaces this one-boolean JSON document.
+    -- Decode common BOMs and accept only a complete object; partial/bad writes
+    -- leave the current mode unchanged instead of accidentally enabling it.
     if s:sub(1,2)=="\255\254" then
         s=s:sub(3):gsub("(.)\0","%1")
     elseif s:sub(1,2)=="\254\255" then
         s=s:sub(3):gsub("\0(.)","%1")
     else s=s:gsub("^\239\187\191","") end
-    for line in (s.."\n"):gmatch("(.-)\n") do
-        local value=line:match("^%s*[Ee][Nn][Aa][Bb][Ll][Ee][Dd]%s*=%s*([^;#\r\n]+)")
-        if value then
-            value=value:match("^%s*(.-)%s*$"):lower()
-            if value=="on" or value=="true" or value=="1" or value=="yes" then return true end
-            if value=="off" or value=="false" or value=="0" or value=="no" then return false end
-            return nil -- don't change modes on an incomplete file write
-        end
-    end
+    local value=s:match('^%s*{%s*"Enabled"%s*:%s*(%a+)%s*}%s*$')
+    if value=="true" then return true end
+    if value=="false" then return false end
 end
 local function command(value)
     sequence=sequence+1

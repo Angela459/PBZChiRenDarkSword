@@ -10,10 +10,12 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 CSC = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 FILES = ('.gitattributes', '.gitignore', 'README.md', 'audio-manifest.json',
-         'Menu/main.js', 'Menu/README.md', 'Menu/patch_menu_core.py', 'Scripts/main.lua', 'enabled.txt')
+         'PBZChiRenDarkSword.config.json', 'PBZChiRenDarkSword.modsmenu.json',
+         'docs/Menu.md', 'Scripts/main.lua', 'enabled.txt')
 AUDIO_FILES = ('1_10.wav', '2_02.wav', '3_09.wav', '4_01.wav', '5_12.wav', '6_11.wav')
 PACKAGE_FILES = ('Scripts/main.lua', 'AudioHost.exe', 'enabled.txt', 'README.md',
-                 'audio-manifest.json') + tuple('Audio/' + name for name in AUDIO_FILES)
+                 'audio-manifest.json', 'PBZChiRenDarkSword.config.json',
+                 'PBZChiRenDarkSword.modsmenu.json') + tuple('Audio/' + name for name in AUDIO_FILES)
 
 
 def strip_dev(source, prefix):
@@ -63,8 +65,6 @@ def release(destination):
             for token in ('diagnoseHit', 'hitDiagnostics', 'hitCounts', 'local calls=', 'via..', 'DEV-'):
                 if token in text:
                     raise ValueError('Development code leaked into release: ' + token)
-        elif relative == 'Menu/main.js':
-            text = strip_dev(text, '//')
         elif relative == 'README.md':
             text = text.split('## 开发与验证', 1)[0]
             text += ('## 分支\n\n'
@@ -90,7 +90,7 @@ def package(source, destination):
         raise ValueError('Package a release build, not a development checkout')
     with zipfile.ZipFile(destination, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for relative in PACKAGE_FILES:
-            archive.write(source / relative, 'PBZChiRenAudioReplace/' + relative)
+            archive.write(source / relative, 'PBZChiRenDarkSword/' + relative)
     print('Install ZIP v1.0: ' + str(destination))
 
 
