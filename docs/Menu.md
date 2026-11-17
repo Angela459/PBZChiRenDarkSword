@@ -1,14 +1,11 @@
-# 自动菜单接入
+# 菜单接入
 
-PBZChiRenDarkSword 使用 PBZ Mods Menu 已有的 UE4SS 配置发现机制，不需要手动放置 `main.js`，不修改菜单核心。
+“炽♂刃音效”栏目下的“启用”和“音量”为同级设置；音量范围 0–200%，默认 100%。
 
-安装 ZIP 在模组目录内自带：
+`PBZChiRenDarkSword.modsmenu.json` 声明两个控件。没有官方 Bridge 时，菜单值保存在 `Content/Paks/~mods/PBZChiRenDarkSword.txt`，Lua 直接读取该文件；Bridge 存在时，继续使用 Bridge 写入的模组 JSON 配置。未通过菜单设置时，Lua 使用 `PBZChiRenDarkSword.config.json` 中的默认值。
 
-- `PBZChiRenDarkSword.config.json`：唯一的 `Enabled` 布尔开关，默认 `true`；Lua 定期读取，开关变更后切换音效。
-- `PBZChiRenDarkSword.modsmenu.json`：栏目标题“炽♂刃音效”、说明和版本。菜单从配置自动生成唯一的开关；不增加恢复默认行。
+仅有 PBZ Mods Menu 时，`Menu/main.js` 直接注册栏目。菜单首次创建设置文件时从 JSON 读取默认值，不会覆盖已有选择。无需 Bridge。
 
-已经安装 PBZ Mods Menu 及其官方可选 **PBZModsMenuBridge** 时，菜单会自动发现并允许修改，无需复制脚本。Bridge 负责枚举由 `enabled.txt` 启动的 UE4SS 模组，以及将菜单修改写回 JSON；它属于菜单的可选支持组件，本模组不捆绑它。
+Lua 在加载时检测菜单 bootstrap，并调用 `Menu/install.ps1` 自动放置本模组注册脚本、添加发现条目，不修改菜单核心。若菜单早于 Lua 启动，首次自动安装后需重启一次游戏。没有安装菜单时跳过此步骤，音效仍能独立运行。
 
-仅安装菜单而没有 Bridge 时，已被菜单枚举到的配置只能查看；仅以 `enabled.txt` 启动的模组也可能不会被列出。没有菜单或 Bridge 时，音效仍正常运行，可直接将模组内 JSON 的 `Enabled` 改为 `false` 关闭。
-
-接入依据是本地 Mods Menu 0.9.8 的 `ue4ssNames()`、`ue4ssMod()` 与配置写入 Bridge 分支。开发回归直接执行这些菜单函数，并检查未修改菜单核心时只生成本模组标题和一个开关。
+已经有官方 Bridge 时，注册脚本不再添加栏目，使用 Bridge 原有的 JSON 发现与写入功能，避免重复显示。

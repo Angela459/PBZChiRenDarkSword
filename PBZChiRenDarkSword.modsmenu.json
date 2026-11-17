@@ -5,9 +5,39 @@
     "zh-Hant": "熾♂刃音效"
   },
   "description": {
-    "en": "Custom charge and impact sounds. Enabled toggles replacement; changes apply immediately.",
-    "zh-Hans": "启用：使用替换音效；关闭：恢复原声。满蓄命中敌人播放 12→11，其余砸地播放 01。",
-    "zh-Hant": "啟用：使用替換音效；關閉：恢復原聲。滿蓄命中敵人播放 12→11，其餘砸地播放 01。"
+    "en": "Custom charge and impact sounds. The volume slider adjusts this mod's playback; it does not read the game's SFX setting.",
+    "zh-Hans": "启用：使用替换音效；关闭：恢复原声。音量滑块只调节本模组播放，暂不读取游戏内音效设置。满蓄命中敌人播放 12→11，其余砸地播放 01。",
+    "zh-Hant": "啟用：使用替換音效；關閉：恢復原聲。音量滑桿只調節本模組播放，暫不讀取遊戲內的音效設定。滿蓄命中敵人播放 12→11，其餘砸地播放 01。"
   },
-  "version": "1.0"
+  "version": "1.0",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "default": true,
+      "label": {
+        "en": "Enabled",
+        "zh-Hans": "启用",
+        "zh-Hant": "啟用"
+      }
+    },
+    {
+      "key": "Volume",
+      "type": "number",
+      "min": 0,
+      "max": 200,
+      "step": 5,
+      "default": 100,
+      "label": {
+        "en": "Volume",
+        "zh-Hans": "音量",
+        "zh-Hant": "音量"
+      },
+      "help": {
+        "en": "100% is the source audio level. The independent player cannot read the game's SFX setting.",
+        "zh-Hans": "100% 为音源原始电平。独立播放器暂时无法读取游戏内的音效设置。",
+        "zh-Hant": "100% 為音源原始電平。獨立播放器暫時無法讀取遊戲內的音效設定。"
+      }
+    }
+  ]
 }

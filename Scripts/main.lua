@@ -7,7 +7,10 @@ local session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
 local output
 local enabled,waiting,ability,lastActive=false,false,nil,false
 local desired,ticks,faulted=true,0,false
+local volumePercent,sentVolume=100,nil
 local settingsPath=root.."PBZChiRenDarkSword.config.json"
+local menuSettingsPath=root.."../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenDarkSword.txt"
+local bridgeIndexPath=root.."../PBZModsMenuBridge/mods-index.txt"
 local patched,held,history={},{},{}
 local timelineRegistered=false
 local sequence,nextDiscover,nextHeartbeat,startedAt=0,0,0,0
@@ -161,21 +164,48 @@ local function writeText(name,s)
     end
     return ok
 end
-local function readMenuSetting()
-    local f=io.open(settingsPath,"rb")
+local function readMenuSettings()
+    -- A script menu saves a TXT inside Content. Read that exact file rather
+    -- than relying on a JavaScript callback to mirror it outside Content.
+    local bridge=io.open(bridgeIndexPath,"r")
+    local fromMenu=false
+    if bridge then bridge:close() else
+        local menu=io.open(menuSettingsPath,"r")
+        if menu then menu:close();fromMenu=true end
+    end
+    local f=io.open(fromMenu and menuSettingsPath or settingsPath,"rb")
     if not f then return nil end
     local s=f:read("*a");f:close()
-    -- The menu bridge atomically replaces this one-boolean JSON document.
-    -- Decode common BOMs and accept only a complete object; partial/bad writes
-    -- leave the current mode unchanged instead of accidentally enabling it.
+    -- The menu bridge atomically replaces this JSON document. Partial writes
+    -- leave current values unchanged.
     if s:sub(1,2)=="\255\254" then
         s=s:sub(3):gsub("(.)\0","%1")
     elseif s:sub(1,2)=="\254\255" then
         s=s:sub(3):gsub("\0(.)","%1")
     else s=s:gsub("^\239\187\191","") end
-    local value=s:match('^%s*{%s*"Enabled"%s*:%s*(%a+)%s*}%s*$')
-    if value=="true" then return true end
-    if value=="false" then return false end
+    if fromMenu then
+        -- The complete last line is the publication marker. Incomplete menu
+        -- writes preserve the last applied volume instead of falling back.
+        if not s:match("\n%s*$") then return nil end
+        local values={}
+        for line in s:gmatch("[^\r\n]+") do
+            line=line:gsub("[;#].*$","")
+            local key,value=line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+            if key=="Enabled" or key=="Volume" then
+                if values[key]~=nil then return nil end
+                values[key]=value
+            end
+        end
+        local volume=tonumber(values.Volume)
+        if values.Enabled~="On" and values.Enabled~="Off" then return nil end
+        if not volume or volume%1~=0 or volume<0 or volume>200 then return nil end
+        return values.Enabled=="On",volume
+    end
+    local enabledValue,volumeText=s:match('^%s*{%s*"Enabled"%s*:%s*(%a+)%s*,%s*"Volume"%s*:%s*(%d+)%s*}%s*$')
+    if enabledValue~="true" and enabledValue~="false" then return nil end
+    local volume=tonumber(volumeText)
+    if not volume or volume<0 or volume>200 then return nil end
+    return enabledValue=="true",volume
 end
 local function command(value)
     sequence=sequence+1
@@ -430,6 +460,7 @@ local function enable()
     if enabled or waiting then return end
     session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
     history={};sequence=0;startedAt=os.time();nextHeartbeat=0;nextDiscover=0;waiting=true
+    sentVolume=nil
     lastHostBeat,hostReadMiss=nil,false
     local exe,ipc=root.."AudioHost.exe",root.."Runtime"
     if exe:find("'",1,true) or ipc:find("'",1,true) then error("unsupported install path") end
@@ -548,15 +579,20 @@ end
 local function tick()
     ticks=ticks+1
     if ticks==1 or ticks%5==0 then
-        local requested=readMenuSetting()
+        local requested,volume=readMenuSettings()
         if requested~=nil and requested~=desired then
             desired=requested;faulted=false
             log("MENU Enabled="..tostring(desired))
             if not desired then disable("menu off") end
         end
+        if requested~=nil and volumePercent~=volume then
+            volumePercent=volume
+            log("VOLUME percent="..volumePercent)
+        end
     end
     if desired and not faulted and not enabled and not waiting then enable() end
     if not enabled and not waiting then return false end
+    if sentVolume~=volumePercent then command("volume:"..volumePercent);sentVolume=volumePercent end
     local now=os.time()
     if now>=nextHeartbeat and writeText("heartbeat.txt",session.."|"..now) then nextHeartbeat=now+1 end
     if dirtyCommands and writeText("command.txt",table.concat(history,"\n").."\n") then dirtyCommands=false end
@@ -585,6 +621,17 @@ local function run()
     local ok,err=pcall(tick)
     if not ok then faulted=true;disable("error "..tostring(err)) end
     return false
+end
+-- Publish the optional script menu even when audio replacement is disabled.
+local menuBootstrap=root.."../../../../../ProjectPBZ/Content/JavaScript/PBZModsMenu/bootstrap.js"
+local menuFile=io.open(menuBootstrap,"r")
+if menuFile then
+    menuFile:close()
+    local script=root.."Menu/install.ps1"
+    if not script:find('"',1,true) then
+        local result=os.execute('powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'..script..'" -ModRoot "'..root..'"')
+        if result~=true and result~=0 then log("MENU_INSTALL_FAILED") end
+    end
 end
 held[#held+1]=run
 if type(LoopInGameThreadWithDelay)=="function" then
