@@ -20,6 +20,6 @@
 
 卸载时退出游戏，删除 `Mods/PBZChiRenDarkSword/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
 
-## 可选开关
+## 菜单设置
 
-开关位于模组目录内的 `PBZChiRenDarkSword.config.json`，默认 `"Enabled": true`，改为 `false` 会停止自定义声音并恢复本模组修改的原声引用。已安装 PBZ Mods Menu 和它的可选 UE4SS Bridge 时，菜单自动提供“炽♂刃音效”栏目，只有一个“启用”开关；不需要菜单也能使用音效。
+开关和音量可在“炽♂刃音效”菜单栏目中设置，两个控件同级。音量范围为 0–200%，默认 100%。未安装 PBZ Mods Menu 时，可在 `PBZChiRenDarkSword.config.json` 修改 `Enabled` 和 `Volume`；100% 为音源原始电平。菜单安装后会自动接入，无需手动复制脚本。

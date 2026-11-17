@@ -25,30 +25,49 @@ internal static class AudioHost
     sealed class Voice : IDisposable
     {
         IntPtr handle, data, header;
+        readonly byte[] samples;
         bool playing;
+        int currentVolume=-1;
         public readonly int Clip;
         public readonly long Cast;
         public readonly bool Reusable;
         public bool Busy { get { return playing; } }
         static readonly uint Size = (uint)Marshal.SizeOf(typeof(Header));
-        public Voice(byte[] samples, int clip=0, long cast=0, bool prepareOnly=false)
+        public Voice(byte[] samples, int clip=0, long cast=0, bool prepareOnly=false, int volume=100)
         {
+            this.samples=samples;
             Clip=clip; Cast=cast; Reusable=prepareOnly;
             var format = new Format {tag=1, channels=1, rate=48000, bytesPerSecond=96000, block=2, bits=16};
             try {
                 int error = waveOutOpen(out handle, UInt32.MaxValue, ref format, IntPtr.Zero, IntPtr.Zero, 0);
                 if (error != 0) throw new Exception("waveOutOpen " + error);
-                data=Marshal.AllocHGlobal(samples.Length); Marshal.Copy(samples,0,data,samples.Length);
+                data=Marshal.AllocHGlobal(samples.Length);
+                SetVolume(volume);
                 header=Marshal.AllocHGlobal((int)Size);
                 Marshal.StructureToPtr(new Header {data=data,length=(uint)samples.Length},header,false);
                 error=waveOutPrepareHeader(handle,header,Size);
                 if (error != 0) throw new Exception("waveOutPrepareHeader " + error);
-                if(!prepareOnly) Play();
+                if(!prepareOnly) Play(volume);
             } catch { Dispose(); throw; }
         }
-        public void Play()
+        public void SetVolume(int volume)
+        {
+            volume=Math.Max(0,Math.Min(200,volume));
+            if(data==IntPtr.Zero || currentVolume==volume) return;
+            var scaled=new byte[samples.Length];
+            for(int i=0;i+1<samples.Length;i+=2) {
+                short sample=BitConverter.ToInt16(samples,i);
+                int value=sample*volume/100;
+                value=Math.Max(short.MinValue,Math.Min(short.MaxValue,value));
+                scaled[i]=(byte)(value&255); scaled[i+1]=(byte)((value>>8)&255);
+            }
+            Marshal.Copy(scaled,0,data,scaled.Length);
+            currentVolume=volume;
+        }
+        public void Play(int volume=100)
         {
             if(playing || handle==IntPtr.Zero) throw new Exception("voice is busy or closed");
+            SetVolume(volume);
             int error=waveOutWrite(handle,header,Size);
             if(error!=0) throw new Exception("waveOutWrite " + error);
             playing=true;
@@ -144,6 +163,7 @@ internal static class AudioHost
                 // Idle prepared headers emit no sound; a hit only submits data.
                 for(int i=0;i<4;i++) hitVoices.Add(new Voice(hitSequence,0,0,true));
                 long heartbeat=Now(),readyAt=0,lastSequence=0;
+                int volumePercent=100;
                 Log(log,"READY v1.0 session="+session);
                 Trace(log,"prewarmed_hit_voices="+hitVoices.Count);
                 bool quit=false;
@@ -160,23 +180,31 @@ internal static class AudioHost
                             string[] p=line.Trim().Split('|'); long seq;
                             if(p.Length!=3 || p[0]!=session || !long.TryParse(p[1],out seq) || seq<=lastSequence) continue;
                             string[] action=p[2].Split(':'); long cast=0;
-                            if(action.Length>2 || (action.Length==2 && (!long.TryParse(action[1],out cast) || cast<1))) continue;
+                            int requestedVolume=0;
+                            bool setVolume=action.Length==2 && action[0]=="volume" && int.TryParse(action[1],out requestedVolume) && requestedVolume>=0 && requestedVolume<=200;
+                            if(action.Length>2 || (action.Length==2 && !setVolume && (!long.TryParse(action[1],out cast) || cast<1))) continue;
                             int clip=0;
                             bool play=action[0].Length==5 && action[0].StartsWith("play") && int.TryParse(action[0].Substring(4),out clip) && clip>=1 && clip<=4;
                             bool hit=action[0]=="hit";
-                            if((hit || (play && clip==4)) ? action.Length!=2 : action.Length!=1) continue;
-                            if(!play && !hit && action[0]!="stop" && action[0]!="quit") continue;
+                            if((hit || (play && clip==4)) ? action.Length!=2 : !setVolume && action.Length!=1) continue;
+                            if(!play && !hit && !setVolume && action[0]!="stop" && action[0]!="quit") continue;
                             // Lua retains all recent commands, so adjacent stage messages cannot overwrite each other.
                             if(!text.EndsWith("\n") && line==text.Substring(text.LastIndexOf('\n')+1)) continue;
                             lastSequence=seq;
                             if(p[2]=="stop" || p[2]=="quit") { Stop(voices); Trace(log,p[2].ToUpper()+" "+seq); }
                             if(p[2]=="quit") { quit=true; break; }
+                            if(setVolume) {
+                                volumePercent=requestedVolume;
+                                if(volumePercent==0) Stop(voices);
+                                foreach(var voice in hitVoices) if(!voice.Busy) voice.SetVolume(volumePercent);
+                                Trace(log,"VOLUME "+volumePercent+" command="+seq); continue;
+                            }
                             if(play) {
                                 if(clip==4 && cast>0 && hitCasts.Contains(cast)) {
                                     Trace(log,"SKIP clip=4 reason=hit cast="+cast+" command="+seq); continue;
                                 }
                                 if(voices.Count>=12) Stop(voices);
-                                voices.Add(new Voice(clips[clip-1],clip,cast)); Trace(log,"PLAY clip="+clip+" command="+seq+" cast="+cast);
+                                voices.Add(new Voice(clips[clip-1],clip,cast,false,volumePercent)); Trace(log,"PLAY clip="+clip+" command="+seq+" cast="+cast);
                             }
                             if(hit) {
 #if DEVELOPMENT
@@ -190,8 +218,8 @@ internal static class AudioHost
                                 if(voices.Count>=12) Stop(voices);
                                 Voice prepared=null;
                                 foreach(var voice in hitVoices) if(!voice.Busy) { prepared=voice;break; }
-                                if(prepared!=null) { prepared.Play(); voices.Add(prepared); }
-                                else voices.Add(new Voice(hitSequence));
+                                if(prepared!=null) { prepared.Play(volumePercent); voices.Add(prepared); }
+                                else voices.Add(new Voice(hitSequence,0,0,false,volumePercent));
 #if DEVELOPMENT
                                 timer.Stop();
                                 Trace(log,"STOP_GROUND cast="+cast+" voices="+stopped+" remaining="+remaining+" command="+seq);
@@ -201,7 +229,8 @@ internal static class AudioHost
                         }
                     } catch(IOException) { }
                     for(int i=voices.Count-1;i>=0;i--) if(voices[i].Done) {
-                        if(voices[i].Reusable) voices[i].Release(); else voices[i].Dispose();
+                        if(voices[i].Reusable) { voices[i].Release(); voices[i].SetVolume(volumePercent); }
+                        else voices[i].Dispose();
                         voices.RemoveAt(i);
                     }
                     Thread.Sleep(10);

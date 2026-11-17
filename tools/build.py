@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CSC = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 FILES = ('.gitattributes', '.gitignore', 'README.md', 'audio-manifest.json',
          'PBZChiRenDarkSword.config.json', 'PBZChiRenDarkSword.modsmenu.json',
-         'docs/Menu.md', 'Scripts/main.lua', 'enabled.txt')
+         'docs/Menu.md', 'Scripts/main.lua', 'enabled.txt', 'Menu/main.js', 'Menu/install.ps1')
 AUDIO_FILES = ('1_10.wav', '2_02.wav', '3_09.wav', '4_01.wav', '5_12.wav', '6_11.wav')
 PACKAGE_FILES = ('Scripts/main.lua', 'AudioHost.exe', 'enabled.txt', 'README.md',
                  'audio-manifest.json', 'PBZChiRenDarkSword.config.json',
-                 'PBZChiRenDarkSword.modsmenu.json') + tuple('Audio/' + name for name in AUDIO_FILES)
+                 'PBZChiRenDarkSword.modsmenu.json', 'Menu/main.js', 'Menu/install.ps1') + tuple('Audio/' + name for name in AUDIO_FILES)
 
 
 def strip_dev(source, prefix):

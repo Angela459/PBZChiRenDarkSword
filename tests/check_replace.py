@@ -172,9 +172,9 @@ end
 function allLogs() local out='';for path,value in pairs(files) do if path:match('%.log$') then out=out..value end end;return out end
 function command() return files['../Runtime/command.txt'] or '' end
 function occurrences(s,word) local n=0;for _ in s:gmatch(word) do n=n+1 end;return n end
-function menu(value)
+function menu(value,volume)
     local v=value=='On' and 'true' or (value=='Off' and 'false' or '')
-    files['../PBZChiRenDarkSword.config.json']='{\n  \"Enabled\": '..v..'\n}'
+    files['../PBZChiRenDarkSword.config.json']='{\n  \"Enabled\": '..v..',\n  \"Volume\": '..tostring(volume or 100)..'\n}'
 end
 '''
 
@@ -188,12 +188,29 @@ def runtime(initial=None,setup=None):
     lua.execute((ROOT/'Scripts/main.lua').read_text(encoding='utf-8'))
     return lua
 
+# Reproduce the actual failed setup: UI file says zero, JSON still says 100.
+menu_path='../'+'../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenDarkSword.txt'
+menu_lua=runtime()
+menu_lua.globals().menuFilePath=menu_path
+menu_lua.execute('menu("On",100);files[menuFilePath]="; ChiRen audio menu\\r\\nEnabled=On\\r\\nVolume=0\\r\\n";step(8)')
+assert '|volume:0' in menu_lua.eval('command()')
+assert '|volume:100' not in menu_lua.eval('command()')
+menu_lua.execute('files[menuFilePath]="Enabled=On\\r\\nVolume=35\\r\\n";step(5)')
+assert menu_lua.eval('command()').strip().endswith('|volume:35')
+menu_lua.execute('files[menuFilePath]="Enabled=On\\r\\nVolume=";step(5)')
+assert menu_lua.eval('command()').strip().endswith('|volume:35')
+menu_lua.execute('files[menuFilePath]="Enabled=Off\\r\\nVolume=0\\r\\n";step(5);assert(actions[1].AkEvent==events[1])')
+print('PASS real menu TXT overrides stale JSON: zero/35 IPC, partial writes preserved, same-file toggle restores originals')
+
 lua=runtime()
 lua.execute('step(1);assert(hostSession~=nil and runtimeExists);assert(files["../Runtime/heartbeat.txt"]);step(7);assert(calls>0);for i=1,9 do assert(actions[i].AkEvent==nil) end;assert(actions[10].AkEvent==otherEvent)')
+assert '|volume:100' in lua.eval('command()')
 assert 'ARMED stage-driven' in lua.eval('allLogs()')
 if not RELEASE:
     assert 'PlayTimeline params=Timeline' in lua.eval('allLogs()')
 print('PASS clean install creates Runtime before IPC writes; immediate default-on, verified timeline signatures and nine muted refs')
+lua.execute('menu("On",65);step(5);assert(command():match("volume:65"))')
+print('PASS menu volume changes are sent to the live player')
 lua.execute('rootValues.bIsActive=true;step(1);assert(not command():find("play",1,true))')
 for stage in [1,2,3]:
     lua.execute(f'rootValues.ChargeCount={stage};step(1)')
@@ -473,7 +490,7 @@ print('PASS saved Off prevents host launch, native scans, and all replacement af
 
 for encoding in ('utf-8-sig', 'utf-16-le', 'utf-16-be'):
     lua=runtime('Off')
-    text='{\r\n  "Enabled": true\r\n}\r\n'
+    text='{\r\n  "Enabled": true,\r\n  "Volume": 100\r\n}\r\n'
     data=text.encode(encoding)
     if encoding=='utf-16-le': data=b'\xff\xfe'+data
     if encoding=='utf-16-be': data=b'\xfe\xff'+data
@@ -486,7 +503,7 @@ print('PASS UTF-8 BOM and UTF-16 menu settings decode correctly')
 lua=runtime('Off');lua.execute('step(5);menu("O");step(5);assert(hostSession==nil);menu("On");step(8);assert(actions[1].AkEvent==nil)')
 print('PASS incomplete JSON menu writes preserve current setting')
 
-for invalid in ('{"Enabled": "false"}', '{"Enabled": 0}', '{"Enabled": false,}', '{"Enabled": false}garbage', '{"Enabled": true, "Enabled": false}'):
+for invalid in ('{"Enabled": "false"}', '{"Enabled": 0}', '{"Enabled": false,}', '{"Enabled": false}garbage', '{"Enabled": true, "Enabled": false}', '{"Enabled":true}'):
     lua=runtime('Off')
     lua.execute('step(5);assert(hostSession==nil)')
     lua.globals().badConfig=invalid
@@ -548,18 +565,18 @@ with tempfile.TemporaryDirectory(prefix='pbz-stage-silent-device-') as temp:
         end=time.monotonic()+8
         while time.monotonic()<end and not(ipc/'ready.txt').exists():time.sleep(.05)
         assert(ipc/'ready.txt').exists()
-        operations=['play1','play2','play3','play4:10','play4:11','hit:10','play4:10','hit:11','play4:12','hit:10']
+        operations=['volume:60','play1','play2','play3','play4:10','play4:11','hit:10','play4:10','hit:11','play4:12','hit:10']
         batch=''.join(session+'|'+str(n)+'|'+op+'\n' for n,op in enumerate(operations,1))
         (ipc/'command.txt').write_text(batch,encoding='ascii')
         log_file=ipc/('host-'+session+'.log')
         end=time.monotonic()+5
-        while time.monotonic()<end and 'command=10 cast=10' not in log_file.read_text():time.sleep(.01)
+        while time.monotonic()<end and 'command=11 cast=10' not in log_file.read_text():time.sleep(.01)
         time.sleep(.3) # short hit buffers completed; next hit should reuse one
-        batch+=session+'|11|hit:13\n'+session+'|12|stop\n'+session+'|13|hit:14\n'
+        batch+=session+'|12|hit:13\n'+session+'|13|stop\n'+session+'|14|hit:14\n'
         (ipc/'command.txt').write_text(batch,encoding='ascii')
         end=time.monotonic()+5
-        while time.monotonic()<end and 'command=13 cast=14' not in log_file.read_text():time.sleep(.01)
-        (ipc/'command.txt').write_text(batch+session+'|14|hit\n'+session+'|15|play4\n'+session+'|16|quit\n',encoding='ascii')
+        while time.monotonic()<end and 'command=14 cast=14' not in log_file.read_text():time.sleep(.01)
+        (ipc/'command.txt').write_text(batch+session+'|15|hit\n'+session+'|16|play4\n'+session+'|17|quit\n',encoding='ascii')
         assert host.wait(timeout=5)==0
         log=(ipc/('host-'+session+'.log')).read_text()
         assert 'READY v1.0' in log and 'EXIT' in log and 'ERROR' not in log,log
@@ -568,18 +585,19 @@ with tempfile.TemporaryDirectory(prefix='pbz-stage-silent-device-') as temp:
             print('PASS release WinMM host accepts silent stages/hits, exits cleanly, and omits diagnostic output')
         else:
             assert all('PLAY clip='+str(n) in log for n in range(1,5)),log
-            assert 'PLAY sequence=12,11 command=6 cast=10' in log,log
-            assert 'STOP_GROUND cast=10 voices=1 remaining=4 command=6' in log,log
-            assert 'STOP_GROUND cast=11 voices=1 remaining=4 command=8' in log,log
-            assert 'SKIP clip=4 reason=hit cast=10 command=7' in log,log
-            assert 'PLAY clip=4 command=9 cast=12' in log,log
-            assert 'STOP_GROUND cast=10 voices=0 remaining=6 command=10' in log,log
-            assert 'PLAY sequence=12,11 command=11 cast=13 prepared=True' in log,log
-            assert 'PLAY sequence=12,11 command=13 cast=14 prepared=True' in log,log
+            assert 'VOLUME 60 command=1' in log,log
+            assert 'PLAY sequence=12,11 command=7 cast=10' in log,log
+            assert 'STOP_GROUND cast=10 voices=1 remaining=4 command=7' in log,log
+            assert 'STOP_GROUND cast=11 voices=1 remaining=4 command=9' in log,log
+            assert 'SKIP clip=4 reason=hit cast=10 command=8' in log,log
+            assert 'PLAY clip=4 command=10 cast=12' in log,log
+            assert 'STOP_GROUND cast=10 voices=0 remaining=6 command=11' in log,log
+            assert 'PLAY sequence=12,11 command=12 cast=13 prepared=True' in log,log
+            assert 'PLAY sequence=12,11 command=14 cast=14 prepared=True' in log,log
             assert 'prewarmed_hit_voices=4' in log,log
             assert log.count('prepared=True')==5,log
             assert 'ERROR' not in log,log
-            assert 'command=14' not in log and 'command=15' not in log,log
+            assert 'command=15' not in log and 'command=16' not in log,log
             print('PASS native WinMM stops only same-cast 01, skips later 01 after hit, preserves charge/other-cast voices, plays ordered 12->11 (silence only)')
             import re
             times=[float(v) for v in re.findall(r'submit_ms=([\d.]+)',log)]
