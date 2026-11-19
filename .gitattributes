@@ -1,8 +1,0 @@
-* text=auto
-*.lua text eol=lf
-*.py text eol=lf
-*.js text eol=lf
-*.md text eol=lf
-*.json text eol=lf
-*.wav binary
-*.exe binary
