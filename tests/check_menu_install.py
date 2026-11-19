@@ -33,6 +33,7 @@ with tempfile.TemporaryDirectory(prefix='pbz-menu-install-') as temporary:
     result = json.loads(discovered.read_text(encoding='utf-8'))
     assert result['mods'] == [manifest['mods'][0], manifest['mods'][2],
                               {'id': 'PBZChiRenDarkSword', 'entry': 'PBZModsMenu/Mods/PBZChiRenDarkSword/main', 'enabled': True}]
+    assert (mod / 'Menu/install-version.txt').read_text(encoding='utf-8') == 'v1.1\n'
     before = (discovered.read_bytes(), installed.read_bytes())
     subprocess.run(command, check=True, capture_output=True)
     assert before == (discovered.read_bytes(), installed.read_bytes())

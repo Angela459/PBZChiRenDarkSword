@@ -1,4 +1,4 @@
-"""Offline native-API mocks and silent host IPC checks; no audio is played."""
+"""Offline Lua-to-native audio API mocks; no audio is played."""
 import os
 import subprocess
 import tempfile
@@ -13,6 +13,8 @@ RELEASE=bool(os.environ.get('PBZ_TEST_ROOT'))
 from lupa.lua54 import LuaRuntime
 
 MOCK=(TESTS/'mock_unreal.lua').read_text(encoding='utf-8')
+SCRIPT=(ROOT/'Scripts/main.lua').read_text(encoding='utf-8')
+assert 'os.execute' not in SCRIPT, 'Lua startup must not spawn a console process'
 EXTRA=r'''
 local function object(id,props,values,isRoot)
     local methods={type=function() return values.Kind or 'UObject' end,
@@ -43,19 +45,9 @@ end
 otherEvent=object('AkAudioEvent Other.Heavy',{}, {})
 actions[10]=object('GAA_PlaySound_Opt_C Mock.BP_Renewal_Hun_C.ChiRen.Release_03.Hit',
     {AkEvent='ObjectProperty'},{AkEvent=otherEvent})
-missingOne,hostMissing,noHooks=false,false,false
-readyOverride=nil
-writeFailures={}
-runtimeExists=false
+missingOne,noHooks,missingAudio=false,false,false
 local baseOpen=io.open
 io.open=function(path,mode)
-    if path:find('../Runtime/',1,true) and not runtimeExists then return nil,'directory does not exist' end
-    if mode=='w' and writeFailures[path] then return nil,'simulated Windows sharing violation' end
-    if mode=='r' and path=='../Runtime/ready.txt' and readyOverride~=nil then
-        if readyOverride=='missing' then return nil end
-        if readyOverride=='error' then error('simulated Windows sharing violation') end
-        return {read=function() return readyOverride end,close=function() end}
-    end
     local f=baseOpen(path,mode)
     if f then
         local write=f.write
@@ -97,12 +89,22 @@ end
 Key.F6=6
 RegisterKeyBind=function() error('Audio replacement must not register hotkeys') end
 LoopInGameThreadWithDelay=function(ms,fn) assert(ms==50);pump=fn;return 1 end
-os.execute=function(cmd)
-    assert(cmd:find('Start%-Process') and cmd:find('WindowStyle Hidden'))
-    assert(cmd:find('[System.IO.Directory]::CreateDirectory',1,true))
-    runtimeExists=true
-    hostSession=assert(cmd:match(",'([^']+)'%) %-WindowStyle Hidden"))
-    if not hostMissing then files['../Runtime/ready.txt']=hostSession..'|ready|'..math.floor(clock) end
+audioCommands={}
+PBZ_PlayAudio=function(action,first,second)
+    if missingAudio then return false end
+    local value
+    if action=='play' then value='play'..tostring(first)..(second and second>0 and ':'..second or '')
+    elseif action=='hit' then value='hit:'..tostring(first)
+    elseif action=='volume' then value='volume:'..tostring(first)
+    elseif action=='stop' then value='stop'
+    else return false end
+    audioCommands[#audioCommands+1]='mock|'..tostring(#audioCommands+1)..'|'..value
+    return true
+end
+menuInstallCalls={}
+PBZ_RunHiddenPowerShell=function(script,root,version)
+    menuInstallCalls[#menuInstallCalls+1]={script=script,root=root,version=version}
+    files[root..'Menu/install-version.txt']=version..'\r\n'
     return true
 end
 nativeHooks={}
@@ -165,16 +167,15 @@ function hit(target)
 end
 function step(count)
     for i=1,count do clock=clock+0.05
-        if hostSession and not hostMissing then files['../Runtime/ready.txt']=hostSession..'|ready|'..math.floor(clock) end
         pump()
     end
 end
-function allLogs() local out='';for path,value in pairs(files) do if path:match('%.log$') then out=out..value end end;return out end
-function command() return files['../Runtime/command.txt'] or '' end
+function allLogs() local out=table.concat(printed);for path,value in pairs(files) do if path:match('%.log$') then out=out..value end end;return out end
+function command() return table.concat(audioCommands,'\n')..(#audioCommands>0 and '\n' or '') end
 function occurrences(s,word) local n=0;for _ in s:gmatch(word) do n=n+1 end;return n end
-function menu(value,volume)
+function menu(value,volume,original)
     local v=value=='On' and 'true' or (value=='Off' and 'false' or '')
-    files['../PBZChiRenDarkSword.config.json']='{\n  \"Enabled\": '..v..',\n  \"Volume\": '..tostring(volume or 100)..'\n}'
+    files['../PBZChiRenDarkSword.config.json']='{\n  \"Enabled\": '..v..',\n  \"Volume\": '..tostring(volume or 100)..',\n  \"PlayOriginal\": '..tostring(original==true)..'\n}'
 end
 '''
 
@@ -185,32 +186,56 @@ def runtime(initial=None,setup=None):
         lua.execute(setup)
     if initial is not None:
         lua.globals().menu(initial)
-    lua.execute((ROOT/'Scripts/main.lua').read_text(encoding='utf-8'))
+    lua.execute(SCRIPT)
     return lua
 
 # Reproduce the actual failed setup: UI file says zero, JSON still says 100.
 menu_path='../'+'../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenDarkSword.txt'
+menu_bootstrap_path='../'+'../../../../../ProjectPBZ/Content/JavaScript/PBZModsMenu/bootstrap.js'
+first_install=runtime(setup='files["' + menu_bootstrap_path + '"]="ready"')
+assert first_install.eval('#menuInstallCalls')==1
+assert first_install.eval('menuInstallCalls[1].version')=='v1.1'
+assert first_install.eval("files['../Menu/install-version.txt']")=='v1.1\r\n'
+installed_again=runtime(setup='files["' + menu_bootstrap_path + '"]="ready";files["../Menu/install-version.txt"]="v1.1\\r\\n"')
+assert installed_again.eval('#menuInstallCalls')==0
+print('PASS menu installer runs once, records its version and skips unchanged launches')
+
+native_registration=runtime(setup="files['../../mods.txt']='OtherMod : 1\\r\\n'")
+assert 'OtherMod : 1\r\nPBZChiRenNativeAudio : 1\r\n' in native_registration.eval("files['../../mods.txt']")
+assert 'restart the game once' in native_registration.eval('allLogs()')
+native_registration_again=runtime(setup="files['../../mods.txt']='OtherMod : 1\\r\\nPBZChiRenNativeAudio : 1\\r\\n'")
+assert native_registration_again.eval("files['../../mods.txt']").count('PBZChiRenNativeAudio')==1
+native_disabled=runtime(setup="files['../../mods.txt']='PBZChiRenNativeAudio : 0\\r\\n'")
+assert native_disabled.eval("files['../../mods.txt']")=='PBZChiRenNativeAudio : 0\r\n'
+assert 'explicitly disables' in native_disabled.eval('allLogs()')
+print('PASS native UE4SS mod is auto-registered once; explicit disabled entry is preserved')
+
 menu_lua=runtime()
 menu_lua.globals().menuFilePath=menu_path
 menu_lua.execute('menu("On",100);files[menuFilePath]="; ChiRen audio menu\\r\\nEnabled=On\\r\\nVolume=0\\r\\n";step(8)')
-assert '|volume:0' in menu_lua.eval('command()')
-assert '|volume:100' not in menu_lua.eval('command()')
+assert menu_lua.eval('command()').strip().endswith('|volume:0')
 menu_lua.execute('files[menuFilePath]="Enabled=On\\r\\nVolume=35\\r\\n";step(5)')
 assert menu_lua.eval('command()').strip().endswith('|volume:35')
-menu_lua.execute('files[menuFilePath]="Enabled=On\\r\\nVolume=";step(5)')
-assert menu_lua.eval('command()').strip().endswith('|volume:35')
+menu_lua.execute('files[menuFilePath]="Enabled=On\\r\\nVolume=35\\r\\nPlayOriginal=On\\r\\n";step(5);assert(actions[1].AkEvent==events[1])')
+menu_lua.execute('files[menuFilePath]="Enabled=On\\r\\nVolume=35\\r\\nPlayOriginal=Off\\r\\n";step(5);assert(actions[1].AkEvent==nil)')
+menu_lua.execute('local before=command();files[menuFilePath]="Enabled=On\\r\\nVolume=";step(5);assert(command()==before)')
 menu_lua.execute('files[menuFilePath]="Enabled=Off\\r\\nVolume=0\\r\\n";step(5);assert(actions[1].AkEvent==events[1])')
-print('PASS real menu TXT overrides stale JSON: zero/35 IPC, partial writes preserved, same-file toggle restores originals')
+print('PASS menu TXT overrides JSON and toggles original sound live while preserving incomplete-write behavior')
 
 lua=runtime()
-lua.execute('step(1);assert(hostSession~=nil and runtimeExists);assert(files["../Runtime/heartbeat.txt"]);step(7);assert(calls>0);for i=1,9 do assert(actions[i].AkEvent==nil) end;assert(actions[10].AkEvent==otherEvent)')
+lua.execute('step(8);assert(calls>0);for i=1,9 do assert(actions[i].AkEvent==nil) end;assert(actions[10].AkEvent==otherEvent)')
 assert '|volume:100' in lua.eval('command()')
 assert 'ARMED stage-driven' in lua.eval('allLogs()')
 if not RELEASE:
     assert 'PlayTimeline params=Timeline' in lua.eval('allLogs()')
-print('PASS clean install creates Runtime before IPC writes; immediate default-on, verified timeline signatures and nine muted refs')
+print('PASS native audio API available at startup; verified timeline signatures and nine muted refs')
 lua.execute('menu("On",65);step(5);assert(command():match("volume:65"))')
 print('PASS menu volume changes are sent to the live player')
+original_lua=runtime()
+original_lua.execute('step(8);for i=1,9 do assert(actions[i].AkEvent==nil) end;menu("On",65,true);step(5);for i=1,9 do assert(actions[i].AkEvent==events[i]) end')
+original_lua.execute('rootValues.bIsActive=true;rootValues.ChargeCount=1;step(1);assert(command():match("play1"));assert(actions[1].AkEvent==events[1])')
+original_lua.execute('menu("On",65,false);step(5);for i=1,9 do assert(actions[i].AkEvent==nil) end')
+print('PASS original sound toggle preserves game audio while custom clips continue, then reapplies muting when switched off')
 lua.execute('rootValues.bIsActive=true;step(1);assert(not command():find("play",1,true))')
 for stage in [1,2,3]:
     lua.execute(f'rootValues.ChargeCount={stage};step(1)')
@@ -231,15 +256,6 @@ assert lua.eval('command()').strip().endswith('|stop')
 assert lua.eval('occurrences(command(),"play4")')==1
 print('PASS cancellation never plays release clip')
 
-for bad_read in ['missing', 'error', '', 'partial|ready|', 'wrong-session|ready|1000']:
-    lua.globals().readyOverride=bad_read
-    lua.execute('step(10);assert(actions[1].AkEvent==nil);assert(not command():find("|quit",1,true))')
-    lua.globals().readyOverride=None
-    lua.execute('step(2);assert(actions[1].AkEvent==nil)')
-assert 'HOST_HEARTBEAT_RETRY' in lua.eval('allLogs()')
-assert 'HOST_HEARTBEAT_RECOVERED' in lua.eval('allLogs()')
-print('PASS transient missing/locked/empty/partial/wrong-session heartbeat reads preserve replacement')
-
 for attempt in range(8):
     lua.execute('rootValues.bIsActive=true;rootValues.ChargeCount=0;step(1)')
     for stage in [1,2,3]:
@@ -247,8 +263,8 @@ for attempt in range(8):
     lua.execute('release(3);step(1);groundValues.PlayingID=groundValues.PlayingID+1;step(1);rootValues.bIsActive=false;rootValues.ChargeCount=0;step(12)')
 assert lua.eval('occurrences(command(),"play4")')==9
 assert lua.eval('occurrences(command(),"play1")')==10 # one earlier cancelled cast
-assert 'ORIGINAL host heartbeat lost' not in lua.eval('allLogs()')
-print('PASS eight more complete ultimates each play all four nodes after transient IPC read failures')
+assert 'ORIGINAL native audio C++ mod unavailable' not in lua.eval('allLogs()')
+print('PASS repeated ultimates dispatch all four clips through the native C++ API')
 
 # Ground and enemy damage are independent; low charge can only play ground audio.
 for charge in [1,2]:
@@ -276,8 +292,8 @@ assert '|hit:1' in immediate_lua.eval('command()')
 if not RELEASE:
     assert 'dispatch=callback' in immediate_lua.eval('allLogs()')
 immediate_lua.execute('step(1);assert(occurrences(command(),"|hit")==1)')
-immediate_lua.execute('step(2);writeFailures["../Runtime/command.txt"]=true;hit();assert(occurrences(command(),"|hit")==1);writeFailures["../Runtime/command.txt"]=nil;step(1);assert(occurrences(command(),"|hit")==2)')
-print('PASS verified hit is published before the next timer tick, never repeated by timer; transient write failure retains immediate command')
+immediate_lua.execute('step(2);hit();assert(occurrences(command(),"|hit")==2);step(1);assert(occurrences(command(),"|hit")==2)')
+print('PASS verified hit is submitted to the native audio API immediately and exactly once')
 
 # Same trace as 18:28:32: count resets, then charges again while bIsActive never
 # becomes false at a sample. The second cast must rearm and replay all nodes.
@@ -471,22 +487,13 @@ if not RELEASE:
     assert 'depth=2 PBZ_SweepTraceBulletData /Game/Child.Child' in graph_lua.eval('allLogs()')
 print('PASS reflected emitter StartEvents -> sub-bullet data graph matches full-charge child hit even without BulletSourceAbility')
 
-lua.execute('writeFailures["../Runtime/heartbeat.txt"]=true;step(40);assert(actions[1].AkEvent==nil);writeFailures["../Runtime/heartbeat.txt"]=nil;step(1)')
-lua.execute('rootValues.bIsActive=false;step(1);rootValues.bIsActive=true;rootValues.ChargeCount=0;step(1);writeFailures["../Runtime/command.txt"]=true;rootValues.ChargeCount=1;step(1)')
-old_command=lua.eval('command()')
-lua.execute('step(4);assert(actions[1].AkEvent==nil);writeFailures["../Runtime/command.txt"]=nil;step(1)')
-assert lua.eval('command()')!=old_command
-assert lua.eval('command()').strip().endswith('|play1')
-assert 'IPC_WRITE_RECOVERED command.txt' in lua.eval('allLogs()')
-print('PASS transient heartbeat/command write locks recover and pending audio commands survive')
-
 lua.execute('menu("Off");step(5);for i=1,9 do assert(actions[i].AkEvent==events[i]) end;step(650);for i=1,9 do assert(actions[i].AkEvent==events[i]) end')
 print('PASS menu Off restores originals and stays off')
 lua.execute('menu("On");step(8);assert(actions[1].AkEvent==nil)')
 print('PASS menu On re-enables stage replacement')
 
-lua=runtime('Off');lua.execute('step(620);assert(calls==0 and hostSession==nil)')
-print('PASS saved Off prevents host launch, native scans, and all replacement after restart')
+lua=runtime('Off');lua.execute('step(620);assert(calls==0 and not enabled)')
+print('PASS saved Off prevents native scans and replacement after restart')
 
 for encoding in ('utf-8-sig', 'utf-16-le', 'utf-16-be'):
     lua=runtime('Off')
@@ -500,107 +507,37 @@ for encoding in ('utf-8-sig', 'utf-16-le', 'utf-16-be'):
     lua.execute("files['../PBZChiRenDarkSword.config.json']=encodedConfig;step(8);assert(actions[1].AkEvent==nil)")
 print('PASS UTF-8 BOM and UTF-16 menu settings decode correctly')
 
-lua=runtime('Off');lua.execute('step(5);menu("O");step(5);assert(hostSession==nil);menu("On");step(8);assert(actions[1].AkEvent==nil)')
+lua=runtime('Off');lua.execute('step(5);menu("O");step(5);assert(not enabled);menu("On");step(8);assert(actions[1].AkEvent==nil)')
 print('PASS incomplete JSON menu writes preserve current setting')
 
 for invalid in ('{"Enabled": "false"}', '{"Enabled": 0}', '{"Enabled": false,}', '{"Enabled": false}garbage', '{"Enabled": true, "Enabled": false}', '{"Enabled":true}'):
     lua=runtime('Off')
-    lua.execute('step(5);assert(hostSession==nil)')
+    lua.execute('step(5);assert(not enabled)')
     lua.globals().badConfig=invalid
-    lua.execute("files['../PBZChiRenDarkSword.config.json']=badConfig;step(8);assert(hostSession==nil)")
+    lua.execute("files['../PBZChiRenDarkSword.config.json']=badConfig;step(8);assert(not enabled)")
 print('PASS malformed, duplicate-key and nonboolean JSON never changes the active mode')
 
 for setup,expected in [('noHooks=true','release timeline hook unavailable'),
-                       ('missingOne=true','WAIT Release_03'),('hostMissing=true','host startup timeout')]:
+                       ('missingOne=true','WAIT Release_03')]:
     lua=runtime();lua.execute(setup+';step(850);assert(actions[1].AkEvent==events[1])')
     assert expected in lua.eval('allLogs()')
-print('PASS missing hooks/actions/host leaves originals intact')
+print('PASS missing hooks/actions leave original game sounds intact')
 
-lua=runtime();lua.execute('step(10);hostMissing=true;step(250);assert(actions[1].AkEvent==events[1]);step(30)')
-assert 'host heartbeat lost' in lua.eval('allLogs()')
-lua.execute('hostMissing=false;menu("Off");step(5);menu("On");step(8);assert(actions[1].AkEvent==nil)')
-print('PASS host failure restores originals, explicit menu off/on recovers without retry loop')
+missing_audio=runtime(setup='PBZ_PlayAudio=nil')
+missing_audio.execute('step(8);assert(not enabled and actions[1].AkEvent==events[1])')
+assert 'native C++ audio mod unavailable' in missing_audio.eval('allLogs()')
+print('PASS missing native C++ API keeps original game sounds intact')
 
-lua=runtime();lua.execute('step(10);readyOverride="missing";step(250);assert(actions[1].AkEvent==events[1])')
-assert 'host heartbeat lost (missing/incomplete file' in lua.eval('allLogs()')
-print('PASS continuously unreadable heartbeat still restores originals after verified heartbeat expires')
+unready_audio=runtime(setup='missingAudio=true')
+unready_audio.execute('step(8);assert(not enabled and actions[1].AkEvent==events[1])')
+assert 'native audio command failed' in unready_audio.eval('allLogs()')
+print('PASS native audio initialization failure keeps original game sounds intact')
 
-lua=runtime();lua.execute('step(10);writeFailures["../Runtime/heartbeat.txt"]=true;step(250);assert(actions[1].AkEvent==events[1])')
-assert 'IPC write timeout heartbeat.txt' in lua.eval('allLogs()')
-print('PASS permanent write denial restores originals instead of retrying forever')
-
-# Native smoke test loads all six WAVs but never sends play, so it emits no sound.
-with tempfile.TemporaryDirectory(prefix='pbz-stage-host-') as temp:
-    ipc=Path(temp)/'Runtime';session='20261116-123456-123456'
-    assert not ipc.exists()
-    host=subprocess.Popen([str(ROOT/'AudioHost.exe'),str(ipc),session],creationflags=subprocess.CREATE_NO_WINDOW)
-    try:
-        end=time.monotonic()+5
-        while time.monotonic()<end and not(ipc/'ready.txt').exists():time.sleep(.05)
-        assert(ipc/'ready.txt').read_text().startswith(session+'|ready|')
-        (ipc/'heartbeat.txt').write_text(session+'|'+str(int(time.time())),encoding='ascii')
-        (ipc/'command.txt').write_text(session+'|1|stop\n'+session+'|2|stop\n'+session+'|3|quit\n',encoding='ascii')
-        assert host.wait(timeout=5)==0
-        log=(ipc/('host-'+session+'.log')).read_text()
-        assert 'READY v1.0' in log and 'EXIT' in log and 'ERROR' not in log
-        if not RELEASE:
-            assert 'STOP 1' in log and 'STOP 2' in log and 'QUIT 3' in log
-        assert 'PLAY ' not in log
-        print('PASS native host creates missing Runtime and loads six WAVs; queued IPC consumed in order without audition')
-    finally:
-        if host.poll() is None:host.terminate();host.wait(timeout=5)
-
-# Exercise the real WinMM allocation/mixing/cleanup path with only zero PCM samples.
-with tempfile.TemporaryDirectory(prefix='pbz-stage-silent-device-') as temp:
-    base=Path(temp);(base/'Audio').mkdir();ipc=base/'Runtime';ipc.mkdir()
-    shutil.copy2(ROOT/'AudioHost.exe',base/'AudioHost.exe')
-    for name in ['1_10.wav','2_02.wav','3_09.wav','4_01.wav','5_12.wav','6_11.wav']:
-        with wave.open(str(base/'Audio'/name),'wb') as w:
-            frames=4800 if name in ['5_12.wav','6_11.wav'] else 48000*3
-            w.setnchannels(1);w.setsampwidth(2);w.setframerate(48000);w.writeframes(bytes(frames*2))
-    session='20261116-123456-234567'
-    (ipc/'heartbeat.txt').write_text(session+'|'+str(int(time.time())),encoding='ascii')
-    host=subprocess.Popen([str(base/'AudioHost.exe'),str(ipc),session],creationflags=subprocess.CREATE_NO_WINDOW)
-    try:
-        end=time.monotonic()+8
-        while time.monotonic()<end and not(ipc/'ready.txt').exists():time.sleep(.05)
-        assert(ipc/'ready.txt').exists()
-        operations=['volume:60','play1','play2','play3','play4:10','play4:11','hit:10','play4:10','hit:11','play4:12','hit:10']
-        batch=''.join(session+'|'+str(n)+'|'+op+'\n' for n,op in enumerate(operations,1))
-        (ipc/'command.txt').write_text(batch,encoding='ascii')
-        log_file=ipc/('host-'+session+'.log')
-        end=time.monotonic()+5
-        while time.monotonic()<end and 'command=11 cast=10' not in log_file.read_text():time.sleep(.01)
-        time.sleep(.3) # short hit buffers completed; next hit should reuse one
-        batch+=session+'|12|hit:13\n'+session+'|13|stop\n'+session+'|14|hit:14\n'
-        (ipc/'command.txt').write_text(batch,encoding='ascii')
-        end=time.monotonic()+5
-        while time.monotonic()<end and 'command=14 cast=14' not in log_file.read_text():time.sleep(.01)
-        (ipc/'command.txt').write_text(batch+session+'|15|hit\n'+session+'|16|play4\n'+session+'|17|quit\n',encoding='ascii')
-        assert host.wait(timeout=5)==0
-        log=(ipc/('host-'+session+'.log')).read_text()
-        assert 'READY v1.0' in log and 'EXIT' in log and 'ERROR' not in log,log
-        if RELEASE:
-            assert 'PLAY ' not in log and 'submit_ms=' not in log,log
-            print('PASS release WinMM host accepts silent stages/hits, exits cleanly, and omits diagnostic output')
-        else:
-            assert all('PLAY clip='+str(n) in log for n in range(1,5)),log
-            assert 'VOLUME 60 command=1' in log,log
-            assert 'PLAY sequence=12,11 command=7 cast=10' in log,log
-            assert 'STOP_GROUND cast=10 voices=1 remaining=4 command=7' in log,log
-            assert 'STOP_GROUND cast=11 voices=1 remaining=4 command=9' in log,log
-            assert 'SKIP clip=4 reason=hit cast=10 command=8' in log,log
-            assert 'PLAY clip=4 command=10 cast=12' in log,log
-            assert 'STOP_GROUND cast=10 voices=0 remaining=6 command=11' in log,log
-            assert 'PLAY sequence=12,11 command=12 cast=13 prepared=True' in log,log
-            assert 'PLAY sequence=12,11 command=14 cast=14 prepared=True' in log,log
-            assert 'prewarmed_hit_voices=4' in log,log
-            assert log.count('prepared=True')==5,log
-            assert 'ERROR' not in log,log
-            assert 'command=15' not in log and 'command=16' not in log,log
-            print('PASS native WinMM stops only same-cast 01, skips later 01 after hit, preserves charge/other-cast voices, plays ordered 12->11 (silence only)')
-            import re
-            times=[float(v) for v in re.findall(r'submit_ms=([\d.]+)',log)]
-            print('PASS prepared hit buffers reuse after completion and Stop; silent native dispatch milliseconds:',times)
-    finally:
-        if host.poll() is None:host.terminate();host.wait(timeout=5)
+lua=runtime()
+lua.execute('step(8);rootValues.bIsActive=true;rootValues.ChargeCount=1;step(1);assert(command():match("play1"));rootValues.ChargeCount=2;step(1);rootValues.ChargeCount=3;step(1);release(3);groundValues.PlayingID=50;step(1);hit();step(1)')
+commands=lua.eval('command()')
+assert '|play1' in commands and '|play2' in commands and '|play3' in commands
+assert '|play4:1' in commands and '|hit:1' in commands
+assert lua.eval('occurrences(command(),"|play4:1")==1')
+assert lua.eval('occurrences(command(),"|hit:1")==1')
+print('PASS native C++ bridge receives charge, cast-ground, hit, and stop commands in order')

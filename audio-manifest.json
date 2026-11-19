@@ -2,7 +2,7 @@
   {
     "order": 1,
     "source": "10.mp3",
-    "wav": "Audio/1_10.wav",
+    "wav": "Audio/charge_stage_1.wav",
     "trigger": "ChargeCount=1",
     "duration": 0.576,
     "format": "PCM s16le mono 48000 Hz",
@@ -11,7 +11,7 @@
   {
     "order": 2,
     "source": "02.mp3",
-    "wav": "Audio/2_02.wav",
+    "wav": "Audio/charge_stage_2.wav",
     "trigger": "ChargeCount=2",
     "duration": 0.84,
     "format": "PCM s16le mono 48000 Hz",
@@ -20,7 +20,7 @@
   {
     "order": 3,
     "source": "09.mp3",
-    "wav": "Audio/3_09.wav",
+    "wav": "Audio/charge_stage_3.wav",
     "trigger": "ChargeCount=3",
     "duration": 0.72,
     "format": "PCM s16le mono 48000 Hz",
@@ -29,7 +29,7 @@
   {
     "order": 4,
     "source": "01.mp3",
-    "wav": "Audio/4_01.wav",
+    "wav": "Audio/ground_impact.wav",
     "trigger": "Ground impact unless full-charge hit",
     "duration": 1.272,
     "format": "PCM s16le mono 48000 Hz",
@@ -38,7 +38,7 @@
   {
     "order": 5,
     "source": "12-00.00.00.201-00.00.01.128.mp3",
-    "wav": "Audio/5_12.wav",
+    "wav": "Audio/full_charge_hit_1.wav",
     "trigger": "Full-charge enemy hit, followed by 11",
     "duration": 0.8496875,
     "format": "PCM s16le mono 48000 Hz",
@@ -47,7 +47,7 @@
   {
     "order": 6,
     "source": "11.mp3",
-    "wav": "Audio/6_11.wav",
+    "wav": "Audio/full_charge_hit_2.wav",
     "trigger": "After 12 completes",
     "duration": 1.248,
     "format": "PCM s16le mono 48000 Hz",

@@ -11,8 +11,11 @@ io.open = function(path, mode)
     files[path] = files[path] or ''
     return {
         write=function(_, value) files[path]=files[path]..value end,
-        read=function() return files[path] end,
-        flush=function() end, close=function() end,
+        read=function(_, format)
+            if format == '*l' then return files[path]:match('([^\r\n]*)') end
+            return files[path]
+        end,
+        flush=function() return true end, close=function() return true end,
     }
 end
 local function name(value) return {ToString=function() return value end} end

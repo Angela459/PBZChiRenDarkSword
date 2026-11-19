@@ -1,4 +1,4 @@
-"""Build v1.0 dev host, or generate a clean main payload in a NEW directory."""
+"""Build the native UE4SS audio mod and create install packages."""
 import os
 from pathlib import Path
 import re
@@ -8,14 +8,15 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-CSC = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 FILES = ('.gitattributes', '.gitignore', 'README.md', 'audio-manifest.json',
          'PBZChiRenDarkSword.config.json', 'PBZChiRenDarkSword.modsmenu.json',
          'docs/Menu.md', 'Scripts/main.lua', 'enabled.txt', 'Menu/main.js', 'Menu/install.ps1')
-AUDIO_FILES = ('1_10.wav', '2_02.wav', '3_09.wav', '4_01.wav', '5_12.wav', '6_11.wav')
-PACKAGE_FILES = ('Scripts/main.lua', 'AudioHost.exe', 'enabled.txt', 'README.md',
+AUDIO_FILES = ('charge_stage_1.wav', 'charge_stage_2.wav', 'charge_stage_3.wav',
+               'ground_impact.wav', 'full_charge_hit_1.wav', 'full_charge_hit_2.wav')
+PACKAGE_FILES = ('Scripts/main.lua', 'enabled.txt', 'README.md',
                  'audio-manifest.json', 'PBZChiRenDarkSword.config.json',
                  'PBZChiRenDarkSword.modsmenu.json', 'Menu/main.js', 'Menu/install.ps1') + tuple('Audio/' + name for name in AUDIO_FILES)
+NATIVE_FILES = ('PBZChiRenNativeAudio/dlls/main.dll', 'PBZChiRenNativeAudio/enabled.txt')
 
 
 def strip_dev(source, prefix):
@@ -36,11 +37,20 @@ def strip_dev(source, prefix):
     return '\n'.join(result) + '\n'
 
 
-def compile_host(destination, development=False):
-    args = [str(CSC), '/nologo', '/target:winexe', '/out:' + str(destination)]
-    if development:
-        args.append('/define:DEVELOPMENT')
-    subprocess.run(args + [str(ROOT / 'AudioHost.cs')], check=True)
+def build_native(destination):
+    import_library = os.environ.get('UE4SS_IMPORT_LIBRARY')
+    if not import_library or not Path(import_library).is_file():
+        raise ValueError('Set UE4SS_IMPORT_LIBRARY to the import library for the installed UE4SS version')
+    build_dir = destination.parent / (destination.name + '-native-build')
+    subprocess.run(['cmake', '-S', str(ROOT / 'NativeAudio'), '-B', str(build_dir),
+                    '-A', 'x64', '-DUE4SS_IMPORT_LIBRARY=' + str(Path(import_library).resolve())], check=True)
+    subprocess.run(['cmake', '--build', str(build_dir), '--config', 'Release'], check=True)
+    result = build_dir / 'Release/main.dll'
+    if not result.is_file():
+        raise ValueError('Native UE4SS audio DLL was not produced')
+    target = destination / NATIVE_FILES[0]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(result, target)
 
 
 def release(destination):
@@ -68,22 +78,23 @@ def release(destination):
         elif relative == 'README.md':
             text = text.split('## 开发与验证', 1)[0]
             text += ('## 分支\n\n'
-                     '`main` 为 v1.0 安装版本，仅保留运行、音频及安装所需文件。'
+                     '`main` 为 v1.1 安装版本，包含运行时、音频文件和 UE4SS 原生后端。'
                      '源码构建、详细日志及回归测试见 [dev 分支]'
                      '(https://github.com/Angela459/PBZChiRenDarkSword/tree/dev)。\n\n'
-                     '运行故障日志位于模组目录的 `Runtime/`；正式版不记录逐次播放、接口枚举或性能计时。\n')
+                     '原生播放日志位于 `Mods/PBZChiRenNativeAudio/native-audio.log`。\n')
         with target.open('w', encoding='utf-8', newline='\n') as stream:
             stream.write(text)
     (destination / 'Audio').mkdir()
     for name in AUDIO_FILES:
         shutil.copy2(ROOT / 'Audio' / name, destination / 'Audio' / name)
-    compile_host(destination / 'AudioHost.exe')
-    print('Release v1.0: ' + str(destination))
+    build_native(destination)
+    (destination / 'PBZChiRenNativeAudio/enabled.txt').write_text('', encoding='ascii')
+    print('Release v1.1: ' + str(destination))
 
 
 def package(source, destination):
     source, destination = Path(source).resolve(), Path(destination).resolve()
-    for relative in PACKAGE_FILES:
+    for relative in PACKAGE_FILES + NATIVE_FILES:
         if not (source / relative).is_file():
             raise ValueError('Missing release file: ' + relative)
     if 'DEV-BEGIN' in (source / 'Scripts/main.lua').read_text(encoding='utf-8'):
@@ -91,16 +102,18 @@ def package(source, destination):
     with zipfile.ZipFile(destination, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for relative in PACKAGE_FILES:
             archive.write(source / relative, 'PBZChiRenDarkSword/' + relative)
-    print('Install ZIP v1.0: ' + str(destination))
+        for relative in NATIVE_FILES:
+            archive.write(source / relative, relative)
+    print('Install ZIP v1.1: ' + str(destination))
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['dev']:
-        compile_host(ROOT / 'AudioHost.exe', development=True)
-        print('Development v1.0 host built')
+    if len(sys.argv) == 3 and sys.argv[1] == 'native':
+        build_native(Path(sys.argv[2]).resolve())
+        print('Native UE4SS audio mod built')
     elif len(sys.argv) == 3 and sys.argv[1] == 'release':
         release(sys.argv[2])
     elif len(sys.argv) == 4 and sys.argv[1] == 'package':
         package(sys.argv[2], sys.argv[3])
     else:
-        raise SystemExit('Usage: python tools/build.py dev | release NEW_OUTPUT_DIRECTORY | package RELEASE_DIRECTORY ZIP_PATH')
+        raise SystemExit('Usage: python tools/build.py native OUTPUT_DIRECTORY | release NEW_OUTPUT_DIRECTORY | package RELEASE_DIRECTORY ZIP_PATH')

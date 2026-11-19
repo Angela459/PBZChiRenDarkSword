@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$ModRoot)
+param([Parameter(Mandatory=$true)][string]$ModRoot, [string]$InstallVersion = 'v1.1')
 $ErrorActionPreference = 'Stop'
 $modFolder = (Resolve-Path -LiteralPath $ModRoot).Path.TrimEnd('\', '/')
 $gameFolder = [IO.Path]::GetFullPath((Join-Path $modFolder '../../../../../'))
@@ -25,3 +25,4 @@ if (-not (@($manifest.mods | Where-Object { $_.id -eq $id }).Count)) {
     $manifest.mods = @($manifest.mods) + @([pscustomobject]@{ id=$id; entry="PBZModsMenu/Mods/$id/main"; enabled=$true })
 }
 [IO.File]::WriteAllText($discoveredPath, ($manifest | ConvertTo-Json -Depth 8) + "`r`n", $utf8)
+[IO.File]::WriteAllText((Join-Path $modFolder 'Menu/install-version.txt'), $InstallVersion + "`r`n", $utf8)
