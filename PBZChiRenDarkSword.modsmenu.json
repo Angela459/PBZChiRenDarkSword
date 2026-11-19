@@ -5,11 +5,11 @@
     "zh-Hant": "熾♂刃音效"
   },
   "description": {
-    "en": "Custom charge and impact sounds. The volume slider adjusts this mod's playback; it does not read the game's SFX setting.",
-    "zh-Hans": "启用：使用替换音效；关闭：恢复原声。音量滑块只调节本模组播放，暂不读取游戏内音效设置。满蓄命中敌人播放 12→11，其余砸地播放 01。",
-    "zh-Hant": "啟用：使用替換音效；關閉：恢復原聲。音量滑桿只調節本模組播放，暫不讀取遊戲內的音效設定。滿蓄命中敵人播放 12→11，其餘砸地播放 01。"
+    "en": "Custom charge and impact sounds with an optional original sound layer.",
+    "zh-Hans": "替换炽刃蓄力与大招音效。可选同时播放原版音效。",
+    "zh-Hant": "替換熾刃蓄力與大招音效。可選同時播放原版音效。"
   },
-  "version": "1.0",
+  "version": "1.1",
   "settings": [
     {
       "key": "Enabled",
@@ -19,6 +19,16 @@
         "en": "Enabled",
         "zh-Hans": "启用",
         "zh-Hant": "啟用"
+      }
+    },
+    {
+      "key": "PlayOriginal",
+      "type": "toggle",
+      "default": false,
+      "label": {
+        "en": "Play original sounds too",
+        "zh-Hans": "同时播放原版音效",
+        "zh-Hant": "同時播放原版音效"
       }
     },
     {

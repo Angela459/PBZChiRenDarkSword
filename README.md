@@ -1,6 +1,6 @@
-# PBZChiRenDarkSword v1.0 — 炽♂刃音效
+# PBZChiRenDarkSword v1.1 — 炽♂刃音效
 
-《影之刃零》炽刃大招音效模组。基于 UE4SS 读取技能节点，用本地播放器播放替换音频。默认开启。
+《影之刃零》炽刃大招音效模组。基于 UE4SS 读取技能节点，并由 UE4SS C++ 模组在游戏进程内播放可替换 WAV。默认开启。
 
 | 游戏节点 | 自定义音频 |
 | --- | --- |
@@ -12,20 +12,19 @@
 
 ## 安装
 
-仅需已在当前游戏版本正常工作的 UE4SS。
+需要可用的 UE4SS。
 
-1. 退出游戏，从 [Releases](https://github.com/Angela459/PBZChiRenDarkSword/releases/tag/v1.0) 下载 **PBZChiRenDarkSword-v1.0.zip**。
+1. 退出游戏，从 [Releases](https://github.com/Angela459/PBZChiRenDarkSword/releases/tag/v1.1) 下载 **PBZChiRenDarkSword-v1.1.zip**。
 2. 打开游戏根目录（Steam库中右键《影之刃零》→ 管理 → 浏览本地文件），找到 platform\steam\ue4ss\Mods\目录。
-3. 将zip里面的PBZChiRenDarkSword文件夹复制到Mods文件夹里，再启动游戏。
+3. 将 zip 中的 `PBZChiRenDarkSword` 和 `PBZChiRenNativeAudio` 两个文件夹复制到 Mods 文件夹。
+4. 启动游戏。
 
-卸载时退出游戏，删除 `Mods/PBZChiRenDarkSword/` 即可；若曾手动添加本模组的 `mods.txt` 条目，也可移除。
+卸载时退出游戏，删除 `Mods/PBZChiRenDarkSword/` 与 `Mods/PBZChiRenNativeAudio/`，并从 `mods.txt` 移除对应条目。
 
 ## 菜单设置
 
-开关和音量可在“炽♂刃音效”菜单栏目中设置，两个控件同级。音量范围为 0–200%，默认 100%。未安装 PBZ Mods Menu 时，可在 `PBZChiRenDarkSword.config.json` 修改 `Enabled` 和 `Volume`；100% 为音源原始电平。菜单安装后会自动接入，无需手动复制脚本。
+启用、同时播放原版音效和音量可在“炽♂刃音效”菜单栏目中设置。原版音效开关默认关闭，开启后游戏原声音效与本模组音频叠加播放。音量范围为 0–200%，默认 100%。未安装 PBZ Mods Menu 时，可在 `PBZChiRenDarkSword.config.json` 修改 `Enabled`、`Volume` 和 `PlayOriginal`。
 
-## 分支
+## 替换音频
 
-`main` 为 v1.0 安装版本，仅保留运行、音频及安装所需文件。源码构建、详细日志及回归测试见 [dev 分支](https://github.com/Angela459/PBZChiRenDarkSword/tree/dev)。
-
-运行故障日志位于模组目录的 `Runtime/`；正式版不记录逐次播放、接口枚举或性能计时。
+退出游戏后，将对应 WAV 覆盖到 `Mods/PBZChiRenDarkSword/Audio/`，保留文件名。`charge_stage_1.wav`、`charge_stage_2.wav`、`charge_stage_3.wav` 分别对应三段蓄力，`ground_impact.wav` 对应普通砸地，`full_charge_hit_1.wav` 与 `full_charge_hit_2.wav` 会在满蓄命中时连续播放。音频需为 PCM、单声道、48 kHz、16-bit WAV。重新启动游戏后生效。建议先备份原文件。

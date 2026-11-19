@@ -1,4 +1,5 @@
 {
   "Enabled": true,
-  "Volume": 100
+  "Volume": 100,
+  "PlayOriginal": false
 }

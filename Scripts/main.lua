@@ -1,34 +1,38 @@
 -- ChargeCount drives 10/02/09. A real ground sound is required for 01.
 -- Ground plays 01 immediately unless this cast has hit; a later hit stops its 01.
 local MOD="PBZChiRenDarkSword"
+local menuInstallVersion="v1.1" -- increment when Menu/install.ps1 or Menu/main.js installation behavior changes
 local source=debug.getinfo(1,"S").source:gsub("^@","")
 local root=(source:match("^(.*[\\/])") or "").."../"
-local session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
-local output
-local enabled,waiting,ability,lastActive=false,false,nil,false
+local enabled,ability,lastActive=false,nil,false
 local desired,ticks,faulted=true,0,false
-local volumePercent,sentVolume=100,nil
+local volumePercent=100
+local playOriginal=false
 local settingsPath=root.."PBZChiRenDarkSword.config.json"
 local menuSettingsPath=root.."../../../../../ProjectPBZ/Content/Paks/~mods/PBZChiRenDarkSword.txt"
 local bridgeIndexPath=root.."../PBZModsMenuBridge/mods-index.txt"
-local patched,held,history={},{},{}
+local patched,held={},{}
 local timelineRegistered=false
-local sequence,nextDiscover,nextHeartbeat,startedAt=0,0,0,0
-local lastHostBeat,hostReadMiss=nil,false
-local groundActions,bulletData,ipcFailures={},{},{}
+local nextDiscover=0
+local groundActions,bulletData={},{}
 local releaseBranch,groundBaseline=nil,0
-local hitPlayed,dirtyCommands=false,false
+local hitPlayed=false
 local groundSeen,releaseClosed,hitSeen=false,false,{}
+-- DEV-BEGIN
+local hitDiagnostics={}
+-- DEV-END
 local targetRegistered=false
 local targetWaitLogged=false
 local releaseCharge=0
+-- DEV-BEGIN
+local hitCounts={marker=0,matched=0}
+-- DEV-END
 local previousCount,highestStage,released,releasePending=nil,0,false,false
 local castStarted,chargeResetSeen,castSerial=false,false,0
 local TARGETS={SFX_Combat_Hun_ChiRen_Fire_Charge=true,SFX_Combat_Hun_ChiRen_C_Full=true,
     SFX_Combat_Hun_ChiRen_Blade_Buff=true,SFX_Combat_Hun_ChiRen_C_Release_01=true,
     SFX_Combat_Hun_ChiRen_C_Release_02=true,SFX_Combat_Hun_ChiRen_C_Release_03=true}
 local function log(s)
-    if output then output:write(os.date("%Y-%m-%d %H:%M:%S").." "..s.."\n");output:flush() end
     print("["..MOD.."] "..s.."\n")
 end
 local function kind(v)
@@ -67,6 +71,13 @@ local function readKnown(object,name)
     local prop=fields(object)[name]
     if prop=="ObjectProperty" or prop=="ObjectPtrProperty" or prop=="InterfaceProperty" then return unwrap(object[name]) end
 end
+-- DEV-BEGIN
+local function diagnoseHit(reason,message)
+    local count=hitDiagnostics[reason] or 0
+    if count<4 then log("HIT_FILTER "..reason.." "..(message or "")) end
+    hitDiagnostics[reason]=count+1
+end
+-- DEV-END
 local function isCharacter(object)
     if not valid(object) then return false end
     local cls=object:GetClass()
@@ -82,12 +93,19 @@ local function fullChargeWindow()
     return enabled and ability and (released or releasePending) and not releaseClosed
         and releaseBranch=="Release_03" and releaseCharge>=3
 end
-local function startCast()
+local function startCast(reason,count)
     castSerial=castSerial+1;castStarted=true;chargeResetSeen=false
     highestStage,released,releasePending=0,false,false
     releaseBranch,releaseCharge=nil,0
     groundSeen,releaseClosed,hitPlayed=false,false,false
     hitSeen={}
+-- DEV-BEGIN
+    hitDiagnostics={}
+
+    hitCounts={marker=0,matched=0}
+
+    log("ULTIMATE_START ChargeCount="..tostring(count).." reason="..reason.." cast="..castSerial)
+-- DEV-END
 end
 -- A release action spawns an emitter, whose event graph spawns damage bullets.
 -- Follow only reflected bullet/event fields, with verified struct schema and budgets.
@@ -124,6 +142,9 @@ local function collectBulletData(rootData,branch)
         -- stripped class schema; child assets must inherit BulletDataBase.
         if id==full(rootData) or isData then
             bulletData[id]=bulletData[id] or {};bulletData[id][branch]=true
+-- DEV-BEGIN
+            log("ULTIMATE_BULLET_DATA "..branch.." depth="..depth.." "..id)
+-- DEV-END
         end
         for _,name in ipairs({"BulletData","BulletEventLibrary"}) do
             if props[name]=="ObjectProperty" then visit(object[name],depth+1) end
@@ -143,26 +164,6 @@ local function collectBulletData(rootData,branch)
     end
     local ok,err=pcall(visit,rootData,0)
     if not ok then log("HIT_DATA_GRAPH_PARTIAL "..tostring(err)) end
-end
-local function readText(name)
-    local f=io.open(root.."Runtime/"..name,"r");if not f then return "" end
-    local s=f:read("*a");f:close();return s or ""
-end
-local function writeText(name,s)
-    local ok,err=pcall(function()
-        local f,why=io.open(root.."Runtime/"..name,"w")
-        if not f then error(tostring(why)) end
-        local wrote,message=f:write(s);local closed,closeErr=f:close()
-        if not wrote then error(tostring(message)) end
-        if closed==nil and closeErr then error(tostring(closeErr)) end
-    end)
-    if ok then
-        if ipcFailures[name] then log("IPC_WRITE_RECOVERED "..name) end
-        ipcFailures[name]=nil
-    elseif not ipcFailures[name] then
-        ipcFailures[name]=os.clock();log("IPC_WRITE_RETRY "..name.." "..tostring(err))
-    end
-    return ok
 end
 local function readMenuSettings()
     -- A script menu saves a TXT inside Content. Read that exact file rather
@@ -185,13 +186,13 @@ local function readMenuSettings()
     else s=s:gsub("^\239\187\191","") end
     if fromMenu then
         -- The complete last line is the publication marker. Incomplete menu
-        -- writes preserve the last applied volume instead of falling back.
+        -- writes preserve the last applied settings instead of falling back.
         if not s:match("\n%s*$") then return nil end
         local values={}
         for line in s:gmatch("[^\r\n]+") do
             line=line:gsub("[;#].*$","")
             local key,value=line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
-            if key=="Enabled" or key=="Volume" then
+            if key=="Enabled" or key=="Volume" or key=="PlayOriginal" then
                 if values[key]~=nil then return nil end
                 values[key]=value
             end
@@ -199,51 +200,54 @@ local function readMenuSettings()
         local volume=tonumber(values.Volume)
         if values.Enabled~="On" and values.Enabled~="Off" then return nil end
         if not volume or volume%1~=0 or volume<0 or volume>200 then return nil end
-        return values.Enabled=="On",volume
+        if values.PlayOriginal~=nil and values.PlayOriginal~="On" and values.PlayOriginal~="Off" then return nil end
+        return values.Enabled=="On",volume,values.PlayOriginal=="On"
     end
-    local enabledValue,volumeText=s:match('^%s*{%s*"Enabled"%s*:%s*(%a+)%s*,%s*"Volume"%s*:%s*(%d+)%s*}%s*$')
+    local enabledValue,volumeText,originalValue=s:match('^%s*{%s*"Enabled"%s*:%s*(%a+)%s*,%s*"Volume"%s*:%s*(%d+)%s*,%s*"PlayOriginal"%s*:%s*(%a+)%s*}%s*$')
+    if not enabledValue then
+        enabledValue,volumeText=s:match('^%s*{%s*"Enabled"%s*:%s*(%a+)%s*,%s*"Volume"%s*:%s*(%d+)%s*}%s*$')
+    end
     if enabledValue~="true" and enabledValue~="false" then return nil end
     local volume=tonumber(volumeText)
     if not volume or volume<0 or volume>200 then return nil end
-    return enabledValue=="true",volume
+    if originalValue and originalValue~="true" and originalValue~="false" then return nil end
+    return enabledValue=="true",volume,originalValue=="true"
 end
 local function command(value)
-    sequence=sequence+1
-    history[#history+1]=session.."|"..sequence.."|"..value
-    if #history>128 then table.remove(history,1) end
-    dirtyCommands=true
-    if writeText("command.txt",table.concat(history,"\n").."\n") then dirtyCommands=false end
+    if type(PBZ_PlayAudio)~="function" then error("native audio C++ mod is unavailable") end
+    local action,first,second
+    if value=="stop" or value=="quit" then
+        action="stop"
+    elseif value=="volume:"..volumePercent then
+        action,first="volume",volumePercent
+    else
+        local clip,cast=value:match("^play([1-4]):(%d+)$")
+        if not clip then clip=value:match("^play([1-4])$") end
+        if clip then
+            action,first,second="play",tonumber(clip),tonumber(cast) or 0
+        else
+            cast=value:match("^hit:(%d+)$")
+            if cast then action,first="hit",tonumber(cast) end
+        end
+    end
+    if not action then error("unknown native audio command: "..tostring(value)) end
+    local ok,result=pcall(PBZ_PlayAudio,action,first,second)
+    if not ok or result~=true then error("native audio command failed: "..tostring(ok and result or result)) end
+    return true
 end
-local function queueHit(enemy)
+local function queueHit(enemy,via)
     local key=full(enemy)
     local now=os.clock()
     if hitSeen[key] and now-hitSeen[key]<0.05 then return end
     hitSeen[key]=now
+-- DEV-BEGIN
+    hitCounts.matched=hitCounts.matched+1
+-- DEV-END
     hitPlayed=true -- suppress this cast's ground audio even before the timer runs
     command("hit:"..castSerial)
-end
-local function hostReady()
-    -- Atomic replacement can briefly deny a Windows reader access. A failed read
-    -- is not evidence that the player died; only expiry of its last verified beat is.
-    local now=os.time()
-    local ok,raw=pcall(readText,"ready.txt")
-    local who,status,stamp
-    if ok then who,status,stamp=raw:match("^([^|]+)|([^|]+)|(%d+)%s*$") end
-    local at=tonumber(stamp)
-    if who==session and status=="ready" and at and math.abs(now-at)<=10 then
-        lastHostBeat=at
-        if hostReadMiss then log("HOST_HEARTBEAT_RECOVERED") end
-        hostReadMiss=false
-        return true
-    end
-    local reason=not ok and "read error" or (not who and "missing/incomplete file"
-        or (who~=session and "different session" or (status~="ready" and "not ready" or "stale timestamp")))
-    if lastHostBeat and not hostReadMiss then
-        log("HOST_HEARTBEAT_RETRY reason="..reason.." last_verified_age="..tostring(now-lastHostBeat))
-        hostReadMiss=true
-    end
-    if lastHostBeat and math.abs(now-lastHostBeat)<=10 then return true end
-    return false,reason.." last_verified_age="..tostring(lastHostBeat and now-lastHostBeat or "none")
+-- DEV-BEGIN
+    log("PLAY sequence=12,11 stop_same_cast_01=true cast="..castSerial.." dispatch=callback reason=full-charge enemy contact "..key.." via="..via)
+-- DEV-END
 end
 local function restore()
     for _,item in ipairs(patched) do
@@ -257,13 +261,13 @@ local function restore()
     patched={}
 end
 local function disable(reason)
-    enabled,waiting,ability,lastActive=false,false,nil,false
+    enabled,ability,lastActive=false,nil,false
     previousCount,highestStage,released,releasePending=nil,0,false,false
     castStarted,chargeResetSeen=false,false
     releaseBranch=nil
     groundSeen,releaseClosed,hitSeen=false,true,{}
     groundActions,bulletData={},{}
-    restore();pcall(command,"quit");log("ORIGINAL "..reason.."; all edited references restored")
+    restore();pcall(command,"stop");log("ORIGINAL "..reason.."; all edited references restored")
 end
 local function owned(v)
     if not valid(v) or full(v):find("Default__",1,true) then return false end
@@ -305,16 +309,19 @@ local function registerTimelineHooks()
                     elseif kind(value)=="FName" then name=value:ToString()
                     elseif type(value)=="string" then name=value end
                     if name=="Main" then
-                        if released or releasePending or releaseClosed or not castStarted then startCast() end
+                        if released or releasePending or releaseClosed or not castStarted then startCast("Main timeline",ability.ChargeCount) end
                         return
                     end
                     if name and name:match("^Release_0[123]$") then
-                        if not castStarted and not released then startCast() end
-                        if released and chargeResetSeen then startCast() end
+                        if not castStarted and not released then startCast("release before active sample",ability.ChargeCount) end
+                        if released and chargeResetSeen then startCast("release after charge reset",ability.ChargeCount) end
                         if released then return end
-                        releasePending=name -- only a marker; audio IPC happens on the game-thread timer
+                        releasePending=name -- only a marker; audio submission happens on the game-thread timer
                         releaseBranch=name
                         releaseCharge=math.max(highestStage,ability.ChargeCount)
+-- DEV-BEGIN
+                        hitCounts={marker=0,matched=0}
+-- DEV-END
                         groundSeen,releaseClosed,hitSeen,hitPlayed=false,false,{},false
                         local action=groundActions[name]
                         groundBaseline=valid(action) and action.PlayingID or 0
@@ -358,7 +365,10 @@ local function registerTargetHooks()
     local function eventTarget(data)
         local actor=unwrap(data.EventActor)
         if isCharacter(actor) then
-            return actor
+-- DEV-BEGIN
+            diagnoseHit("target fields","EventActor="..full(actor).." resolved=EventActor")
+-- DEV-END
+            return actor,"EventActor"
         end
         local component,owner
         if bodyVerified and componentVerified and ownerVerified then
@@ -375,10 +385,16 @@ local function registerTargetHooks()
                 end
             end
         end
-        return owner
+-- DEV-BEGIN
+        diagnoseHit("target fields","EventActor="..full(actor).." actor_kind="..kind(actor).." EventBody.Component="..full(component).." component_owner="..full(owner))
+-- DEV-END
+        return owner,"EventBody.Component.GetOwner"
     end
     local function belongsToUltimate(bullet)
         local seen,player={},ability:GetOuter()
+-- DEV-BEGIN
+        local last="initial_kind="..kind(bullet)
+-- DEV-END
         for _=1,8 do
             if not valid(bullet) or seen[full(bullet)] then break end
             seen[full(bullet)]=true
@@ -387,18 +403,30 @@ local function registerTargetHooks()
             local data=readKnown(bullet,"BulletData")
             if not valid(data) then data=readKnown(bullet,"MyData") end
             local branch=bulletData[full(data)]
+-- DEV-BEGIN
+            last="bullet="..full(bullet).." owner="..full(owner).." ability="..full(source).." data="..full(data)
+-- DEV-END
             if valid(source) and full(source)~=full(ability) then
+-- DEV-BEGIN
+                diagnoseHit("target different ability",full(source))
+-- DEV-END
                 return false
             end
             if full(owner)==full(player) and (full(source)==full(ability) or (branch and branch.Release_03)) then return true end
             bullet=readKnown(bullet,"ParentBullet")
         end
+-- DEV-BEGIN
+        diagnoseHit("target source",last)
+-- DEV-END
         return false
     end
     local function inspect(cls)
         if not valid(cls) then return end
         local className=full(cls)
         local count=0
+-- DEV-BEGIN
+        local registered=0
+-- DEV-END
         local ok,err=pcall(function() cls:ForEachFunction(function(fn)
             count=count+1;if count>96 then return true end
             if not valid(fn) then return end
@@ -411,6 +439,9 @@ local function registerTargetHooks()
                 local name=p:GetFName():ToString()
                 if name~="ReturnValue" then names[#names+1]=name;kinds[#kinds+1]=p:GetClass():GetFName():ToString() end
             end)
+-- DEV-BEGIN
+            log("HIT_API function="..path.." flags="..flags.." params="..table.concat(names,",").." types="..table.concat(kinds,","))
+-- DEV-END
             -- A Blueprint override exists under /Asset/...; /Script methods may
             -- run directly in C++ and did not fire in the previous game logs.
             if path:sub(1,8)=="/Script/" then return end
@@ -422,21 +453,43 @@ local function registerTargetHooks()
             if not eventIndex or not bulletIndex then
                 log("HIT_API_SKIP unverified hit parameter layout "..path);return
             end
+-- DEV-BEGIN
+            local calls=0
+-- DEV-END
             local callback=function(context,...)
+-- DEV-BEGIN
+                calls=calls+1
+
+                if calls<=3 then log("TARGET_CALLBACK raw="..calls.." path="..path.." full_charge="..tostring(fullChargeWindow())) end
+-- DEV-END
                 if not fullChargeWindow() then return end
+-- DEV-BEGIN
+                hitCounts.marker=hitCounts.marker+1
+-- DEV-END
                 local args={...}
                 local checked,why=pcall(function()
                     local bullet=unwrap(args[bulletIndex])
                     local data=unwrap(args[eventIndex])
                     if kind(data)~="UScriptStruct" and type(data)~="table" then
+-- DEV-BEGIN
+                        diagnoseHit("target event type",kind(data))
+-- DEV-END
                         return
                     end
-                    local enemy=eventTarget(data)
+                    local enemy,resolvedBy=eventTarget(data)
                     if not isCharacter(enemy) or full(enemy)==full(ability:GetOuter()) then
+-- DEV-BEGIN
+                        diagnoseHit("target actor",full(enemy))
+-- DEV-END
                         return
                     end
                     if not belongsToUltimate(bullet) then return end
-                    queueHit(enemy)
+                    queueHit(enemy,"marker "..path.." target="..resolvedBy)
+-- DEV-BEGIN
+                    diagnoseHit("target callback","bullet_kind="..kind(bullet).." bullet="..full(bullet).." actor="..full(enemy))
+
+                    diagnoseHit("target bullet","owner="..full(readKnown(bullet,"BulletOwnerAvatar")).." source="..full(readKnown(bullet,"BulletSourceAbility")).." data="..full(readKnown(bullet,"BulletData")))
+-- DEV-END
                 end)
                 if not checked then log("ERROR hit callback "..tostring(why)) end
             end
@@ -445,10 +498,16 @@ local function registerTargetHooks()
             local hooked,pre,post=pcall(RegisterHook,path,callback)
             if hooked and type(pre)=="number" and type(post)=="number" then
                 targetRegistered=true
+-- DEV-BEGIN
+                registered=registered+1
+-- DEV-END
                 log("HOOK hit target "..path.." mode=script params="..table.concat(names,","))
             else log("TARGET_HOOK_UNAVAILABLE "..path.." "..tostring(pre)) end
         end) end)
         if not ok then log("TARGET_DISCOVERY_PARTIAL "..className.." "..tostring(err)) end
+-- DEV-BEGIN
+        log("HIT_API_CLASS "..className.." functions="..count.." registered="..registered.." body_schema="..tostring(bodyVerified and componentVerified).." owner_getter="..tostring(ownerVerified))
+-- DEV-END
     end
     local marker=StaticFindObject("/PBZCombatAsset/Prototypes/Bullet/Events/PBZ_BulletEvent_MarkBulletHitTarget.PBZ_BulletEvent_MarkBulletHitTarget_C")
     if not valid(marker) and not targetWaitLogged then
@@ -457,19 +516,17 @@ local function registerTargetHooks()
     inspect(marker)
 end
 local function enable()
-    if enabled or waiting then return end
-    session=os.date("%Y%m%d-%H%M%S").."-"..math.random(100000,999999)
-    history={};sequence=0;startedAt=os.time();nextHeartbeat=0;nextDiscover=0;waiting=true
-    sentVolume=nil
-    lastHostBeat,hostReadMiss=nil,false
-    local exe,ipc=root.."AudioHost.exe",root.."Runtime"
-    if exe:find("'",1,true) or ipc:find("'",1,true) then error("unsupported install path") end
-    local ps="[System.IO.Directory]::CreateDirectory('"..ipc.."') | Out-Null; Start-Process -FilePath '"..exe.."' -ArgumentList @(([string][char]34 + '"..ipc.."' + [char]34),'"..session.."') -WindowStyle Hidden"
-    os.execute('powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "'..ps..'"')
-    if not output then output=io.open(root.."Runtime/run-"..session..".log","a") end
-    ipcFailures={};dirtyCommands=not writeText("command.txt","")
-    writeText("heartbeat.txt",session.."|"..os.time())
-    log("HOST_LAUNCH default replacement")
+    if enabled then return end
+    if type(PBZ_PlayAudio)~="function" then
+        faulted=true
+        log("ORIGINAL native C++ audio mod unavailable; original game sounds left intact")
+        return
+    end
+    nextDiscover=0
+    enabled=true
+    faulted=false
+    command("volume:"..volumePercent)
+    log("NATIVE_AUDIO_ACTIVE in-process C++ playback")
 end
 local function discover()
     local selected
@@ -496,6 +553,9 @@ local function discover()
                     if branch and eventName:match("%.SFX_Combat_Special_LionDancer_HitGround_Stone_Light$")
                         and fields(action).PlayingID=="IntProperty" then
                         groundActions[branch]=action
+-- DEV-BEGIN
+                        log("GROUND_NODE "..branch.." "..actionName.." observe=PlayingID")
+-- DEV-END
                     end
                     local short=eventName:match("%.(SFX_Combat_Hun_ChiRen_[%w_]+)$")
                     if short and TARGETS[short] and eventName:find("/Game/Wwise/Events/SFX/Combat/",1,true) then
@@ -521,9 +581,14 @@ local function discover()
         if not counts["SFX_Combat_Hun_ChiRen_C_Release_"..n] then log("WAIT Release_"..n.." sound missing");return end
     end
     patched=matches
-    for _,item in ipairs(patched) do
-        item.action.AkEvent=nil
-        if valid(item.action.AkEvent) then error("mute assignment failed") end
+    if not playOriginal then
+        for _,item in ipairs(patched) do
+            item.action.AkEvent=nil
+            if valid(item.action.AkEvent) then error("mute assignment failed") end
+-- DEV-BEGIN
+            log("MUTED "..full(item.action))
+-- DEV-END
+        end
     end
     ability,lastActive=selected,selected.bIsActive==true
     previousCount=selected.ChargeCount
@@ -532,10 +597,13 @@ local function discover()
     castStarted,chargeResetSeen=lastActive,false
     if lastActive then
         castSerial=castSerial+1
+-- DEV-BEGIN
+        log("CAST_RESUME cast="..castSerial.." ChargeCount="..previousCount)
+-- DEV-END
     end
     releaseBranch,hitPlayed=nil,false
     groundSeen,releaseClosed,hitSeen=false,false,{}
-    log("ARMED stage-driven; muted="..#matches.." initial_count="..tostring(previousCount))
+    log("ARMED stage-driven; muted="..(playOriginal and 0 or #matches).." play_original="..tostring(playOriginal).." initial_count="..tostring(previousCount))
 end
 local function sample()
     local current=ability.bIsActive==true
@@ -543,19 +611,34 @@ local function sample()
     if type(count)~="number" or count<0 or count>3 then error("ChargeCount outside verified 0..3: "..tostring(count)) end
     if current and released and count==0 and (previousCount or 0)>0 then
         chargeResetSeen=true
+-- DEV-BEGIN
+        log("CHARGE_RESET while active after release; awaiting new charge or Main timeline")
+-- DEV-END
     end
     if current and released and chargeResetSeen and count>0 then
-        startCast()
+        startCast("charge resumed without inactive frame",count)
     elseif current and not lastActive and not releasePending and not castStarted then
-        startCast()
+        startCast("active transition",count)
     end
+-- DEV-BEGIN
+    if count~=previousCount then log("CHARGE_COUNT "..tostring(previousCount).." -> "..count.." active="..tostring(current)) end
+-- DEV-END
     if current and not released and count>highestStage then
         -- No made-up intermediate timing if a native update jumps multiple levels.
+-- DEV-BEGIN
+        if count>highestStage+1 then log("STAGES_SKIPPED "..highestStage.." -> "..count) end
+-- DEV-END
         highestStage=count
         command("play"..count)
+-- DEV-BEGIN
+        log("PLAY clip="..count.." reason=ChargeCount "..count)
+-- DEV-END
     end
     if releasePending and not released then
         released=true
+-- DEV-BEGIN
+        log("RELEASE "..releasePending.." charge="..releaseCharge.." cast="..castSerial.." ground=01 unless hit; full-charge target replaces 01 with 12,11")
+-- DEV-END
         releasePending=false
     end
     if releaseBranch and not groundSeen and not releaseClosed then
@@ -563,13 +646,25 @@ local function sample()
         local playing=valid(action) and action.PlayingID or 0
         if type(playing)=="number" and playing~=0 and playing~=groundBaseline then
             groundSeen=true
+-- DEV-BEGIN
+            log("GROUND_SOUND PlayingID="..tostring(playing).." branch="..releaseBranch)
+-- DEV-END
             if not hitPlayed then
                 command("play4:"..castSerial)
+-- DEV-BEGIN
+                log("PLAY clip=4 reason=ground sound branch="..releaseBranch.." cast="..castSerial)
+-- DEV-END
             end
         end
     end
     if not current and lastActive then
+-- DEV-BEGIN
+        log("ULTIMATE_END released="..tostring(released))
+-- DEV-END
         if not released then command("stop") end -- cancellation is not a release
+-- DEV-BEGIN
+        log("HIT_COUNTS marker="..hitCounts.marker.." matched="..hitCounts.matched)
+-- DEV-END
         releaseClosed=true
         castStarted,chargeResetSeen=false,false
         highestStage=0
@@ -579,7 +674,7 @@ end
 local function tick()
     ticks=ticks+1
     if ticks==1 or ticks%5==0 then
-        local requested,volume=readMenuSettings()
+        local requested,volume,requestedOriginal=readMenuSettings()
         if requested~=nil and requested~=desired then
             desired=requested;faulted=false
             log("MENU Enabled="..tostring(desired))
@@ -587,25 +682,28 @@ local function tick()
         end
         if requested~=nil and volumePercent~=volume then
             volumePercent=volume
+            if enabled then command("volume:"..volumePercent) end
             log("VOLUME percent="..volumePercent)
         end
+        if requested~=nil and playOriginal~=requestedOriginal then
+            playOriginal=requestedOriginal
+            if enabled then
+                restore()
+                ability,lastActive=nil,false
+                releasePending=false
+                castStarted,chargeResetSeen=false,false
+                releaseBranch=nil
+                groundSeen,releaseClosed,hitSeen=false,true,{}
+                groundActions,bulletData={},{}
+                nextDiscover=0
+                command("stop")
+            end
+            log("MENU PlayOriginal="..tostring(playOriginal))
+        end
     end
-    if desired and not faulted and not enabled and not waiting then enable() end
-    if not enabled and not waiting then return false end
-    if sentVolume~=volumePercent then command("volume:"..volumePercent);sentVolume=volumePercent end
+    if desired and not faulted and not enabled then enable() end
+    if not enabled then return false end
     local now=os.time()
-    if now>=nextHeartbeat and writeText("heartbeat.txt",session.."|"..now) then nextHeartbeat=now+1 end
-    if dirtyCommands and writeText("command.txt",table.concat(history,"\n").."\n") then dirtyCommands=false end
-    for name,at in pairs(ipcFailures) do
-        if os.clock()-at>=10 then faulted=true;disable("IPC write timeout "..name);return false end
-    end
-    if waiting then
-        if hostReady() then waiting=false;enabled=true;log("HOST_READY independent stage audio")
-        elseif now-startedAt>10 then faulted=true;disable("host startup timeout; toggle menu off/on to retry") end
-        return false
-    end
-    local ready,reason=hostReady()
-    if not ready then faulted=true;disable("host heartbeat lost ("..tostring(reason).."); toggle menu off/on to retry");return false end
     if ability and not owned(ability) then
         restore();ability=nil;lastActive=false;releasePending=false
         castStarted,chargeResetSeen=false,false
@@ -622,19 +720,60 @@ local function run()
     if not ok then faulted=true;disable("error "..tostring(err)) end
     return false
 end
+local function ensureNativeAudioMod()
+    local path=root.."../mods.txt"
+    local file=io.open(path,"r")
+    if not file then
+        log("NATIVE_MOD_REGISTRATION_FAILED cannot read UE4SS mods.txt")
+        return false
+    end
+    local contents=file:read("*a") or ""
+    file:close()
+    for line in contents:gmatch("[^\r\n]+") do
+        local name,state=line:match("^%s*([^:]+)%s*:%s*([01])%s*$")
+        if name and name:match("^%s*(.-)%s*$")=="PBZChiRenNativeAudio" then
+            if state=="1" then return true end
+            log("NATIVE_MOD_DISABLED mods.txt explicitly disables PBZChiRenNativeAudio")
+            return false
+        end
+    end
+
+    local output,err=io.open(path,"a")
+    if not output then
+        log("NATIVE_MOD_REGISTRATION_FAILED "..tostring(err))
+        return false
+    end
+    if contents~="" and not contents:match("[\r\n]$") then output:write("\r\n") end
+    local wrote,writeError=output:write("PBZChiRenNativeAudio : 1\r\n")
+    local closed,closeError=output:close()
+    if not wrote or closed==nil then
+        log("NATIVE_MOD_REGISTRATION_FAILED "..tostring(writeError or closeError))
+        return false
+    end
+    log("NATIVE_MOD_REGISTERED restart the game once to load the UE4SS C++ audio mod")
+    return false
+end
+
+ensureNativeAudioMod()
 -- Publish the optional script menu even when audio replacement is disabled.
 local menuBootstrap=root.."../../../../../ProjectPBZ/Content/JavaScript/PBZModsMenu/bootstrap.js"
 local menuFile=io.open(menuBootstrap,"r")
 if menuFile then
     menuFile:close()
-    local script=root.."Menu/install.ps1"
-    if not script:find('"',1,true) then
-        local result=os.execute('powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'..script..'" -ModRoot "'..root..'"')
-        if result~=true and result~=0 then log("MENU_INSTALL_FAILED") end
+    local state=io.open(root.."Menu/install-version.txt","r")
+    local installedVersion=state and state:read("*l") or ""
+    if state then state:close() end
+    if installedVersion~=menuInstallVersion then
+        if type(PBZ_RunHiddenPowerShell)=="function" then
+            local ok,result=pcall(PBZ_RunHiddenPowerShell,root.."Menu/install.ps1",root,menuInstallVersion)
+            if not ok or result~=true then log("MENU_INSTALL_FAILED") end
+        else
+            log("MENU_INSTALL_UNAVAILABLE; launch Menu/install.ps1 once to install menu controls")
+        end
     end
 end
 held[#held+1]=run
 if type(LoopInGameThreadWithDelay)=="function" then
     LoopInGameThreadWithDelay(50,run)
-    log("LOADED v1.0 verified hit dispatched directly from callback; prewarmed hit voices; same-cast 01 cancellation")
+    log("LOADED v1.1 verified hit dispatched directly from callback; prewarmed hit voices; same-cast 01 cancellation")
 else log("ERROR no game-thread timer; originals intact") end

@@ -16,7 +16,8 @@ const write = (path, text) => {
 };
 const configPath = root + "/" + ID + ".config.json";
 const values = JSON.parse(read(configPath));
-if (typeof values.Enabled !== "boolean" || !Number.isInteger(values.Volume) || values.Volume < 0 || values.Volume > 200)
+if (values.PlayOriginal === undefined) values.PlayOriginal = false;
+if (typeof values.Enabled !== "boolean" || typeof values.PlayOriginal !== "boolean" || !Number.isInteger(values.Volume) || values.Volume < 0 || values.Volume > 200)
     throw new Error("Invalid audio settings");
 const descriptor = JSON.parse(read(root + "/" + ID + ".modsmenu.json"));
 const bridge = root + "/../PBZModsMenuBridge/mods-index.txt";
@@ -27,7 +28,12 @@ if (!UE.BlueprintPathsLibrary.FileExists(bridge)) {
     const file = ID + ".txt";
     const menuPath=K.ConvertToAbsolutePath(K.GetProjectContentDirectory() + "Paks/~mods/" + file);
     if (!UE.BlueprintPathsLibrary.FileExists(menuPath))
-        write(menuPath, "; ChiRen audio menu\r\nEnabled=" + (values.Enabled ? "On" : "Off") + "\r\nVolume=" + values.Volume + "\r\n");
+        write(menuPath, "; ChiRen audio menu\r\nEnabled=" + (values.Enabled ? "On" : "Off") + "\r\nVolume=" + values.Volume + "\r\nPlayOriginal=" + (values.PlayOriginal ? "On" : "Off") + "\r\n");
+    else {
+        const current = read(menuPath);
+        if (!/^\s*PlayOriginal\s*=/m.test(current))
+            write(menuPath, current.replace(/[\r\n]*$/, "") + "\r\nPlayOriginal=Off\r\n");
+    }
     const accepted = (globalThis.PBZModsMenu ||= []).push(Object.assign({}, descriptor, {
         id: ID, file
     }));
