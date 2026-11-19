@@ -1,5 +1,11 @@
 # PBZChiRenDarkSword v1.1 — 炽♂刃音效
 
+English version: [README.en.md](README.en.md)
+
+视频演示：
+B站：【〖影之刃零MOD〗deep ♂dark♂sword】 https://www.bilibili.com/video/BV1dosu6HERz
+YouTube：https://youtu.be/qU0BHfrs_MM?si=PKaqolOyO2Ukn2PM
+
 《影之刃零》炽刃大招音效模组。基于 UE4SS 读取技能节点，并由 UE4SS C++ 模组在游戏进程内播放可替换 WAV。默认开启。
 
 | 游戏节点 | 自定义音频 |
@@ -17,7 +23,7 @@
 1. 退出游戏，从 [Releases](https://github.com/Angela459/PBZChiRenDarkSword/releases/tag/v1.1) 下载 **PBZChiRenDarkSword-v1.1.zip**。
 2. 打开游戏根目录（Steam库中右键《影之刃零》→ 管理 → 浏览本地文件），找到 platform\steam\ue4ss\Mods\目录。
 3. 将 zip 中的 `PBZChiRenDarkSword` 和 `PBZChiRenNativeAudio` 两个文件夹复制到 Mods 文件夹。
-4. 启动游戏。
+4. 启动游戏。首次启动时，模组会自动将原生音频 Mod 添加到 `mods.txt`，然后重启一次以便 UE4SS 加载它。
 
 卸载时退出游戏，删除 `Mods/PBZChiRenDarkSword/` 与 `Mods/PBZChiRenNativeAudio/`，并从 `mods.txt` 移除对应条目。
 
